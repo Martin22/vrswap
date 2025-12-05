@@ -12,6 +12,7 @@ import core.globals
 from pathlib import Path
 from core.swapper import get_face_swapper
 from core.analyser import get_face, get_faces, get_face_analyser
+from core.border_blur import apply_border_blur
 from threading import Thread
 import threading
 import cv2
@@ -254,6 +255,9 @@ def process_frames(source_img, frame_paths):
                             result = swapper.get(result, target_face, source_face, paste_back=True)
                     else:
                         result = swapper.get(result, target_face, source_face, paste_back=True)
+                    
+                    # Aplikuj border blur - dle Rope-next pro měkké hrany
+                    result = apply_border_blur(result, target_face.bbox, blur_strength=15)
                 
                 # Ulož
                 cv2.imwrite(frame_path, result)

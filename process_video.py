@@ -21,6 +21,7 @@ import core.globals
 from core.swapper import get_face_swapper
 from core.analyser import get_face, get_faces
 from core.advanced_blending import AdvancedFaceBlender
+from core.border_blur import apply_border_blur
 
 
 class VideoProcessor:
@@ -202,6 +203,9 @@ class VideoProcessor:
                                             frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
                                     else:
                                         frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                    
+                                    # Aplikuj border blur - dle Rope-next pro měkké hrany
+                                    frame = apply_border_blur(frame, target_face.bbox, blur_strength=15)
                                 except Exception as e:
                                     print(f"[DEBUG] Swap error: {e}")
                                     import traceback
