@@ -1,0 +1,110 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                    VRSwap - Quick Start Cheat Sheet                        ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+🚀 SUPER SIMPLE (Recommended!)
+
+  python process_video.py --video input.mp4 --faces ./faces --output output.mp4
+
+  That's it! No FFmpeg commands needed.
+
+─────────────────────────────────────────────────────────────────────────────
+
+📋 STEP-BY-STEP SETUP
+
+  1. Create Conda environment (one time)
+     conda env create -f environment.yml
+
+  2. Activate
+     conda activate vrswap
+
+  3. Download model
+     inswapper_128.onnx (from HuggingFace)
+     Place in project root folder
+
+  4. Create faces folder
+     mkdir faces
+     Put your JPG/PNG files there
+
+  5. Run!
+     python process_video.py --video myvideo.mp4 --faces ./faces --output result.mp4
+
+─────────────────────────────────────────────────────────────────────────────
+
+⚙️ WITH OPTIONS
+
+  # GPU with 8 threads (faster)
+  python process_video.py --video video.mp4 --faces ./faces --output result.mp4 --gpu_threads 8
+
+  # 8K with tiles
+  python process_video.py --video 8k.mp4 --faces ./faces --output result.mp4 --tile_size 512
+
+  # CPU only (no GPU)
+  python process_video.py --video video.mp4 --faces ./faces --output result.mp4 --cpu
+
+─────────────────────────────────────────────────────────────────────────────
+
+📁 FILE STRUCTURE
+
+  vrswap/
+  ├── process_video.py         ← Run this!
+  ├── video.mp4                ← Your input video
+  ├── faces/                   ← Folder with face images
+  │   ├── person1.jpg
+  │   ├── person2.jpg
+  │   └── person3.png
+  └── result.mp4               ← Output (auto-created)
+
+─────────────────────────────────────────────────────────────────────────────
+
+⏱️ PROCESSING TIME (RTX 4060 Ti 16GB)
+
+  1080p:  5 seconds per frame   (~15 fps)
+  4K:     20 seconds per frame  (~3 fps)
+  8K:     60 seconds per frame  (~0.5 fps)
+
+  Video = 1000 frames at 4K = ~330 seconds = ~5.5 minutes
+
+─────────────────────────────────────────────────────────────────────────────
+
+🔧 TROUBLESHOOTING
+
+  Problem: "CUDA not available"
+  Fix: python process_video.py ... --cpu
+
+  Problem: "Out of memory"
+  Fix: python process_video.py ... --gpu_threads 2
+
+  Problem: "No face detected"
+  Fix: Make sure face images are clear and frontal
+
+  Problem: "FFmpeg not found"
+  Fix: winget install ffmpeg
+
+─────────────────────────────────────────────────────────────────────────────
+
+📚 MORE INFO
+
+  Full options:
+  python process_video.py --help
+
+  Complete guide:
+  Read PROCESS_VIDEO_GUIDE.md
+
+  Installation issues:
+  Read INSTALL_WINDOWS.md
+
+─────────────────────────────────────────────────────────────────────────────
+
+✅ QUICK TEST
+
+  Test with small video (30 seconds):
+  python process_video.py --video test.mp4 --faces ./faces --output test_out.mp4
+
+  Should take ~1 minute and show progress.
+
+─────────────────────────────────────────────────────────────────────────────
+
+That's all you need to know! 🎬
+
+Questions? Read PROCESS_VIDEO_GUIDE.md
