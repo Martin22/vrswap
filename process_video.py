@@ -15,6 +15,7 @@ import argparse
 from pathlib import Path
 from tqdm import tqdm
 import tempfile
+import numpy as np
 
 import core.globals
 from core.swapper import get_face_swapper
