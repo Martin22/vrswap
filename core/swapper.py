@@ -15,7 +15,7 @@ def get_face_swapper():
     """Načte face swapper model s optimalizacemi."""
     global FACE_SWAPPER
     if FACE_SWAPPER is None:
-        model_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../inswapper_128.onnx')
+        model_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../inswapper_128_fp16.onnx')
         
         # Load model using insightface
         try:

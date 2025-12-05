@@ -147,9 +147,9 @@ def pre_check():
         quit('ffmpeg is not installed!')
     
     # Check model
-    model_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'inswapper_128.onnx')
+    model_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'inswapper_128_fp16.onnx')
     if not os.path.isfile(model_path):
-        quit('File "inswapper_128.onnx" does not exist!')
+        quit('File "inswapper_128_fp16.onnx" does not exist!')
     
     # GPU check - simplified pro Windows 11 stability
     if args.gpu:
