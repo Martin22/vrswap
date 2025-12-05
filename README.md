@@ -84,8 +84,8 @@ ffmpeg -version
 TensorRT can provide 20-50% faster inference than standard CUDA.
 
 ```bash
-# Install TensorRT libraries via Conda
-conda install -c conda-forge tensorrt -y
+# Install TensorRT 8.6.1 (compatible with ONNX Runtime 1.17.0 & CUDA 12.x)
+pip install tensorrt==8.6.1
 
 # Verify installation
 python -c "import tensorrt; print(tensorrt.__version__)"
