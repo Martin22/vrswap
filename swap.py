@@ -251,22 +251,9 @@ def process_frames(source_img, frame_paths):
                 for target_face in target_faces:
                     if core.globals.use_fp16 and core.globals.device == 'cuda':
                         with torch.autocast('cuda'):
-                            swapped = swapper.get(frame, target_face, source_face, paste_back=False)
+                            result = swapper.get(frame, target_face, source_face, paste_back=True)
                     else:
-                        swapped = swapper.get(frame, target_face, source_face, paste_back=False)
-                    
-                    # Ujisti se že swapped je numpy array
-                    if swapped is None:
-                        continue
-                    if isinstance(swapped, (tuple, list)):
-                        # swapper.get() někdy vrací tuple (frame, landmarks)
-                        swapped = swapped[0] if isinstance(swapped[0], np.ndarray) else swapped
-                    if not isinstance(swapped, np.ndarray):
-                        continue
-                    
-                    # Pokročilý blend - eliminuje artefakty
-                    bbox = target_face.bbox
-                    result = AdvancedFaceBlender.blend_faces_advanced(result, swapped, bbox, expand_ratio=1.35, use_color_match=(not fastMode))
+                        result = swapper.get(frame, target_face, source_face, paste_back=True)
                 
                 # Ulož
                 cv2.imwrite(frame_path, result)
@@ -308,9 +295,8 @@ def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_s
         result = frame.copy()
         
         for target_face in target_faces:
-            swapped_temp = swapper.get(frame, target_face, source_face, paste_back=False)
+            result = swapper.get(result, target_face, source_face, paste_back=True)
             bbox = target_face.bbox
-            result = AdvancedFaceBlender.blend_faces_advanced(result, swapped_temp, bbox, expand_ratio=1.35)
         
         cv2.imwrite(frame_path, result)
         return result

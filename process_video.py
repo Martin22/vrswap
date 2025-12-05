@@ -199,22 +199,9 @@ class VideoProcessor:
                                     if core.globals.use_fp16 and core.globals.device == 'cuda':
                                         import torch
                                         with torch.autocast('cuda'):
-                                            swapped = self.swapper.get(frame, target_face, source_face, paste_back=False)
+                                            frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
                                     else:
-                                        swapped = self.swapper.get(frame, target_face, source_face, paste_back=False)
-                                    
-                                    # Ujisti se že swapped je numpy array
-                                    if swapped is None:
-                                        continue
-                                    if isinstance(swapped, (tuple, list)):
-                                        # swapper.get() někdy vrací tuple (frame, landmarks) 
-                                        swapped = swapped[0] if isinstance(swapped[0], np.ndarray) else swapped
-                                    if not isinstance(swapped, np.ndarray):
-                                        continue
-                                    
-                                    # Advanced blending - eliminuje artefakty
-                                    bbox = target_face.bbox
-                                    frame = AdvancedFaceBlender.blend_faces_advanced(frame, swapped, bbox, expand_ratio=1.35, use_color_match=(not self.fast_mode))
+                                        frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
                                 except Exception as e:
                                     print(f"[DEBUG] Swap error: {e}")
                                     import traceback
