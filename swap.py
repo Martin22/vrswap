@@ -60,7 +60,7 @@ sep = "\\" if os.name == "nt" else "/"
 def process_tile(tile_img, source_face, swapper):
     """Procesuje jeden tile s FP16 optimalizací"""
     if core.globals.use_fp16 and core.globals.device == 'cuda':
-        with torch.cuda.amp.autocast():
+        with torch.autocast('cuda'):
             target_faces = get_faces(tile_img)
             if target_faces:
                 for target_face in target_faces:
@@ -286,7 +286,7 @@ def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_s
         if target_faces:
             for target_face in target_faces:
                 if core.globals.use_fp16 and core.globals.device == 'cuda':
-                    with torch.amp.autocast('cuda'):
+                    with torch.autocast('cuda'):
                         swapped_frame = swapper.get(frame, target_face, source_face, paste_back=True)
                 else:
                     swapped_frame = swapper.get(frame, target_face, source_face, paste_back=True)

@@ -52,7 +52,7 @@ def get_swapped_face(frame, target_face, source_face):
     try:
         # FP16 optimization pokud je dostupná
         if core.globals.use_fp16 and core.globals.device == 'cuda':
-            with torch.cuda.amp.autocast():
+            with torch.autocast('cuda'):
                 result = swapper.get(frame, target_face, source_face, paste_back=True)
         else:
             result = swapper.get(frame, target_face, source_face, paste_back=True)

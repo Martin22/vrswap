@@ -181,7 +181,7 @@ class VideoProcessor:
                                     # FP16 if available
                                     if core.globals.use_fp16 and core.globals.device == 'cuda':
                                         import torch
-                                        with torch.amp.autocast('cuda'):
+                                        with torch.autocast('cuda'):
                                             frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
                                     else:
                                         frame = self.swapper.get(frame, target_face, source_face, paste_back=True)

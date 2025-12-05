@@ -53,7 +53,7 @@ def get_face(img_data):
     try:
         # FP16 support když je dostupná
         if core.globals.use_fp16 and core.globals.device == 'cuda':
-            with torch.cuda.amp.autocast():
+            with torch.autocast('cuda'):
                 faces = analyser.get(img_data)
         else:
             faces = analyser.get(img_data)
@@ -75,7 +75,7 @@ def get_faces(img_data):
     try:
         # FP16 support když je dostupná
         if core.globals.use_fp16 and core.globals.device == 'cuda':
-            with torch.cuda.amp.autocast():
+            with torch.autocast('cuda'):
                 faces = analyser.get(img_data)
         else:
             faces = analyser.get(img_data)
