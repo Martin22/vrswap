@@ -23,8 +23,8 @@ High-performance face swapping solution optimized for 360° panoramic videos, VR
 ### Windows Setup (RTX 4060 Ti + CUDA 12.6)
 
 ```bash
-# 1. Create Conda environment with PyTorch + CUDA bundled together (simplest approach)
-conda create -n vrswap python=3.12 pytorch pytorch-cuda=12.6 torchvision torchaudio -c pytorch -c nvidia -y
+# 1. Create Conda environment with CUDA toolkit and libraries
+conda create -n vrswap python=3.12 pytorch pytorch-cuda=12.6 torchvision torchaudio cudatoolkit cudnn -c pytorch -c nvidia -c conda-forge -y
 conda activate vrswap
 
 # 2. VERIFY GPU works
@@ -54,7 +54,7 @@ ffmpeg -version
 **If CUDA still shows False:**
 - Try CUDA 11.8 instead:
   ```bash
-  conda create -n vrswap python=3.12 pytorch pytorch-cuda=11.8 torchvision torchaudio -c pytorch -c nvidia -y
+  conda create -n vrswap python=3.12 pytorch pytorch-cuda=11.8 torchvision torchaudio cudatoolkit cudnn -c pytorch -c nvidia -c conda-forge -y
   ```
 - Or check available CUDA versions:
   ```bash
@@ -64,20 +64,20 @@ ffmpeg -version
 ### Linux/WSL Setup
 
 ```bash
-# 1. Create Conda environment
-conda create -n vrswap python=3.12 -y
+# 1. Create Conda environment with CUDA toolkit and libraries
+conda create -n vrswap python=3.12 pytorch pytorch-cuda=12.6 torchvision torchaudio cudatoolkit cudnn -c pytorch -c nvidia -c conda-forge -y
 conda activate vrswap
 
-# 2. Install PyTorch with CUDA 12.6
-conda install pytorch torchvision torchaudio pytorch-cuda=12.6 -c pytorch -c nvidia -y
+# 2. Verify GPU works
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 
-# 3. Install dependencies
+# 3. Install other dependencies
 pip install -r requirements.txt
 
 # 4. Install FFmpeg
 sudo apt-get update && sudo apt-get install ffmpeg -y
 
-# 5. Verify
+# 5. Verify everything
 python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 ffmpeg -version
 ```
@@ -95,32 +95,32 @@ ffmpeg -version
    # Should return NOTHING
    ```
 
-2. Verify what conda installed:
+2. **Verify CUDA libraries installed** - Check if cudatoolkit and cudnn are there:
    ```bash
-   pip show torch | grep Location
-   # Should NOT contain "cpu"
+   conda list | grep -E "cuda|cudnn"
+   # Should show: cudatoolkit, cudnn, pytorch-cuda
    ```
 
-2. **Try different CUDA version** - conda might not have 12.6 available on all platforms:
-   ```bash
-   # Try CUDA 11.8
-   conda create -n vrswap python=3.12 pytorch pytorch-cuda=11.8 torchvision torchaudio -c pytorch -c nvidia -y
-   conda activate vrswap
-   python -c "import torch; print(torch.cuda.is_available())"
-   ```
-
-3. **Check available CUDA versions**:
-   ```bash
-   conda search pytorch-cuda -c pytorch
-   # Pick one and use in conda create command
-   ```
-
-4. **Reinstall from scratch** (if already installed wrong version):
+3. **Reinstall with CUDA libraries** - Make sure to include cudatoolkit and cudnn:
    ```bash
    conda env remove -n vrswap
-   conda create -n vrswap python=3.12 pytorch pytorch-cuda=12.6 torchvision torchaudio -c pytorch -c nvidia -y
+   conda create -n vrswap python=3.12 pytorch pytorch-cuda=12.6 torchvision torchaudio cudatoolkit cudnn -c pytorch -c nvidia -c conda-forge -y
    conda activate vrswap
    python -c "import torch; print(torch.cuda.is_available())"
+   ```
+
+4. **Try CUDA 11.8 if 12.6 doesn't work**:
+   ```bash
+   conda env remove -n vrswap
+   conda create -n vrswap python=3.12 pytorch pytorch-cuda=11.8 torchvision torchaudio cudatoolkit cudnn -c pytorch -c nvidia -c conda-forge -y
+   conda activate vrswap
+   python -c "import torch; print(torch.cuda.is_available())"
+   ```
+
+5. **Check available CUDA versions**:
+   ```bash
+   conda search pytorch-cuda -c pytorch
+   # Pick one and use in conda create command with cudatoolkit and cudnn
    ```
 
 **Problem: NumPy error `AttributeError: module 'pkgutil' has no attribute 'ImpImporter'`**
@@ -137,6 +137,12 @@ pip install --upgrade numpy>=1.26.0
 ```bash
 pip install onnxruntime-gpu==1.17.0
 ```
+
+**Problem: `cudatoolkit` not found in conda**
+- Some systems use `cuda-toolkit` instead:
+  ```bash
+  conda create -n vrswap python=3.12 pytorch pytorch-cuda=12.6 torchvision torchaudio cuda-toolkit cudnn -c pytorch -c nvidia -c conda-forge -y
+  ```
 
 ## Quick Start
 
