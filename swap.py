@@ -251,13 +251,9 @@ def process_frames(source_img, frame_paths):
                 for target_face in target_faces:
                     if core.globals.use_fp16 and core.globals.device == 'cuda':
                         with torch.autocast('cuda'):
-                            swapped = swapper.get(frame, target_face, source_face, paste_back=False)
+                            result = swapper.get(result, target_face, source_face, paste_back=True)
                     else:
-                        swapped = swapper.get(frame, target_face, source_face, paste_back=False)
-                    
-                    # Pokročilý blend - eliminuje artefakty
-                    bbox = target_face.bbox
-                    result = AdvancedFaceBlender.blend_faces_advanced(result, swapped, bbox, expand_ratio=1.35, use_color_match=(not fastMode))
+                        result = swapper.get(result, target_face, source_face, paste_back=True)
                 
                 # Ulož
                 cv2.imwrite(frame_path, result)
@@ -299,9 +295,7 @@ def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_s
         result = frame.copy()
         
         for target_face in target_faces:
-            swapped = swapper.get(result, target_face, source_face, paste_back=False)
-            bbox = target_face.bbox
-            result = AdvancedFaceBlender.blend_faces_advanced(result, swapped, bbox, expand_ratio=1.35)
+            result = swapper.get(result, target_face, source_face, paste_back=True)
         
         cv2.imwrite(frame_path, result)
         return result
