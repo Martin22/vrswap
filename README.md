@@ -23,8 +23,8 @@ High-performance face swapping solution optimized for 360° panoramic videos, VR
 ### Windows Setup (RTX 4060 Ti + CUDA 12.6)
 
 ```bash
-# 1. Create Conda environment with PyTorch CUDA (includes libraries bundled)
-conda create -n vrswap python=3.12 pytorch::pytorch pytorch::torchvision pytorch::torchaudio pytorch::pytorch-cuda=12.6 -c pytorch -c conda-forge -y
+# 1. Create Conda environment with PyTorch CUDA (simplest - let conda choose versions)
+conda create -n vrswap python=3.12 pytorch torchvision torchaudio pytorch-cuda -c pytorch -y
 conda activate vrswap
 
 # 2. VERIFY GPU works
@@ -42,13 +42,6 @@ choco install ffmpeg -y
 # OR manually: Download from https://ffmpeg.org/download.html and add to PATH
 ```
 
-**If pytorch-cuda=12.6 fails, try without version:**
-```bash
-conda create -n vrswap python=3.12 pytorch torchvision torchaudio pytorch-cuda -c pytorch -y
-conda activate vrswap
-python -c "import torch; print(torch.cuda.is_available())"
-```
-
 **Verify complete setup:**
 ```bash
 python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
@@ -58,13 +51,13 @@ python -c "import onnxruntime; print(f'ONNX: {onnxruntime.__version__}')"
 ffmpeg -version
 ```
 
-**If CUDA still shows False:**
-- Try with CUDA 11.8 instead:
-  ```bash
-  conda env remove -n vrswap -y
-  conda create -n vrswap python=3.12 pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -y
-  conda activate vrswap
-  ```
+**If that fails, try without pytorch-cuda specifier:**
+```bash
+conda env remove -n vrswap -y
+conda create -n vrswap python=3.12 pytorch torchvision torchaudio -c pytorch -y
+conda activate vrswap
+python -c "import torch; print(torch.cuda.is_available())"
+```
 
 ### Linux/WSL Setup
 
