@@ -16,7 +16,7 @@ High-performance face swapping solution optimized for 360° panoramic videos, VR
 
 ### Prerequisites
 - **Python 3.12+** (Windows/Linux/WSL)
-- **CUDA 11.8+** (for GPU acceleration)
+- **CUDA 12.6** (recommended for RTX 40-series) or **CUDA 11.8+** (for older cards like RTX 30/20-series)
 - **FFmpeg** (for video processing)
 
 ### Quick Setup (Windows)
@@ -26,8 +26,10 @@ High-performance face swapping solution optimized for 360° panoramic videos, VR
 conda create -n vrswap python=3.12 -y
 conda activate vrswap
 
-# 2. Install PyTorch with CUDA
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -y
+# 2. Install PyTorch with CUDA 12.6 (recommended for RTX 40-series)
+conda install pytorch torchvision torchaudio pytorch-cuda=12.6 -c pytorch -c nvidia -y
+# OR for older GPUs (RTX 30-series, RTX 20-series):
+# conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -y
 
 # 3. Install dependencies
 pip install -r requirements.txt
@@ -44,8 +46,10 @@ choco install ffmpeg -y
 conda create -n vrswap python=3.12 -y
 conda activate vrswap
 
-# 2. Install PyTorch with CUDA
-conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -y
+# 2. Install PyTorch with CUDA 12.6 (recommended for RTX 40-series)
+conda install pytorch torchvision torchaudio pytorch-cuda=12.6 -c pytorch -c nvidia -y
+# OR for older GPUs (RTX 30-series, RTX 20-series):
+# conda install pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -c nvidia -y
 
 # 3. Install dependencies
 pip install -r requirements.txt
@@ -338,4 +342,4 @@ For issues:
 
 ---
 
-**Last Updated**: 2024 | **Python**: 3.12+ | **PyTorch**: 2.1.0+ | **CUDA**: 11.8+
+**Last Updated**: 2024 | **Python**: 3.12+ | **PyTorch**: 2.1.0+ | **CUDA**: 12.6 (or 11.8+ for older GPUs)
