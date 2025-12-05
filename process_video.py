@@ -2,7 +2,7 @@
 """
 VRSwap Complete Video Processing Pipeline
 Extracts frames → Face swap with multiple source faces → Encode to video
-Windows 11 + Python 3.12 compatible
+Windows 11 + Python 3.12 compatible + NVIDIA GPU acceleration
 """
 
 import os
@@ -122,23 +122,37 @@ class VideoProcessor:
         return fps, frame_count, (width, height)
     
     def _extract_frames(self):
-        """Extract frames from video"""
-        print("[STEP 2/4] Extracting frames from video...")
+        """Extract frames from video using NVIDIA GPU acceleration"""
+        print("[STEP 2/4] Extracting frames from video (GPU accelerated)...")
         
         self.work_dir = tempfile.mkdtemp(prefix="vrswap_")
         self.frames_dir = os.path.join(self.work_dir, "frames")
         os.makedirs(self.frames_dir)
         
-        # Use ffmpeg to extract frames
         output_pattern = os.path.join(self.frames_dir, "%06d.jpg")
         
-        cmd = [
-            "ffmpeg",
-            "-i", self.video_path,
-            "-v", "error",
-            "-stats",
-            output_pattern
-        ]
+        # FFmpeg command with NVIDIA GPU acceleration for decoding
+        if self.gpu:
+            cmd = [
+                "ffmpeg",
+                "-hwaccel", "cuda",                    # Enable CUDA hardware acceleration
+                "-hwaccel_output_format", "cuda",      # Output format for GPU
+                "-i", self.video_path,
+                "-qscale:v", "2",                      # High quality JPG
+                "-v", "error",
+                "-stats",
+                output_pattern
+            ]
+        else:
+            # CPU fallback
+            cmd = [
+                "ffmpeg",
+                "-i", self.video_path,
+                "-qscale:v", "2",
+                "-v", "error",
+                "-stats",
+                output_pattern
+            ]
         
         try:
             subprocess.run(cmd, check=True, capture_output=False)
@@ -209,35 +223,57 @@ class VideoProcessor:
         return processed_count
     
     def _encode_video(self, fps, output_resolution):
-        """Encode frames back to video"""
-        print("[STEP 4/4] Encoding video...")
+        """Encode frames back to video using NVIDIA NVENC"""
+        print("[STEP 4/4] Encoding video (GPU accelerated)...")
         
         input_pattern = os.path.join(self.frames_dir, "%06d.jpg")
         
-        # FFmpeg command for encoding
-        cmd = [
-            "ffmpeg",
-            "-framerate", str(fps),
-            "-i", input_pattern,
-            "-c:v", "libx264",
-            "-preset", "medium",
-            "-crf", "18",
-            "-pix_fmt", "yuv420p",
-            "-y",  # Overwrite output
-            self.output_path
-        ]
+        # FFmpeg command with NVIDIA NVENC hardware encoding
+        if self.gpu:
+            cmd = [
+                "ffmpeg",
+                "-y",                                   # Overwrite output
+                "-framerate", str(fps),
+                "-i", input_pattern,
+                "-c:v", "h264_nvenc",                   # NVIDIA hardware encoder
+                "-preset", "p4",                        # Medium preset (p2=fast, p4=medium, p6=slow/HQ)
+                "-tune", "hq",                          # High quality tuning
+                "-rc", "vbr",                           # Variable bitrate
+                "-cq", "19",                            # Quality level (lower=better, 0-51)
+                "-b:v", "0",                            # Let rate control decide bitrate
+                "-pix_fmt", "yuv420p",
+                "-gpu", "0",                            # Use first GPU
+                self.output_path
+            ]
+        else:
+            # CPU fallback (libx264)
+            cmd = [
+                "ffmpeg",
+                "-y",
+                "-framerate", str(fps),
+                "-i", input_pattern,
+                "-c:v", "libx264",
+                "-preset", "medium",
+                "-crf", "18",
+                "-pix_fmt", "yuv420p",
+                self.output_path
+            ]
         
         try:
             subprocess.run(cmd, check=True, capture_output=True)
             print(f"  ✓ Video encoded: {self.output_path}")
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"FFmpeg encoding failed: {e}")
+            raise RuntimeError(f"FFmpeg encoding failed: {e.stderr.decode() if e.stderr else e}")
     
     def process(self):
         """Run complete processing pipeline"""
         try:
             print(f"\n{'='*70}")
             print("VRSwap Video Processing Pipeline")
+            if self.gpu:
+                print("Mode: NVIDIA GPU Accelerated")
+            else:
+                print("Mode: CPU")
             print(f"{'='*70}\n")
             
             # Step 1: Load source faces
@@ -263,6 +299,8 @@ class VideoProcessor:
             
         except Exception as e:
             print(f"\n❌ Error: {e}")
+            import traceback
+            traceback.print_exc()
             return False
         
         finally:
@@ -274,11 +312,11 @@ class VideoProcessor:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="VRSwap - Complete video processing with face swapping",
+        description="VRSwap - Complete video processing with face swapping (NVIDIA GPU accelerated)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage
+  # Basic usage with GPU
   python process_video.py --video input.mp4 --faces ./faces --output output.mp4
 
   # With GPU optimization
@@ -289,6 +327,9 @@ Examples:
 
   # CPU only
   python process_video.py --video video.mp4 --faces faces/ --output output.mp4 --cpu
+
+  # HEVC (H.265) encoding
+  python process_video.py --video video.mp4 --faces faces/ --output output.mp4 --codec hevc
         """
     )
     
@@ -311,7 +352,7 @@ Examples:
         core.globals.providers = ['CPUExecutionProvider']
         print("[INFO] Using CPU mode")
     else:
-        print("[INFO] Using GPU mode")
+        print("[INFO] Using GPU mode (NVIDIA NVENC/CUDA)")
     
     # Create processor and run
     try:
@@ -329,6 +370,8 @@ Examples:
         
     except Exception as e:
         print(f"❌ Fatal error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 
