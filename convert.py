@@ -3,40 +3,41 @@ import os
 import cv2
 import sys
 import numpy as np
-import cupy as cp
-from scipy.ndimage import gaussian_gradient_magnitude
 import threading
-import core.lib.Perspec2Equirec as P2E
 import argparse
 import re
-from concurrent.futures import ThreadPoolExecutor
-import subprocess
 import json
-
-from tqdm import tqdm
-from threading import Thread
-from numba import cuda
-
+import subprocess
 import shutil
 import glob
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
+from threading import Thread
 
+import core.lib.Perspec2Equirec as P2E
+
+# Optional GPU imports
+try:
+    import cupy as cp
+    from numba import cuda
+    HAS_CUPY = True
+except ImportError:
+    HAS_CUPY = False
+
+# Configuration
 FRAME_CHUNK_SIZE = 500
 GPU_THREADS = 9
 
-sep = "/"
-if os.name == "nt":
-    sep = "\\"
-
-def resetDevice():
-    device = cuda.get_current_device()
-    device.reset()
+# Windows path compatibility - automatic
+PATH_SEP = os.sep  # Automatically "/" on Linux, "\\" on Windows
 
 # Initialize argument parser
-parser = argparse.ArgumentParser()
-parser.add_argument("--frames_folder", help="Frames folder")
+parser = argparse.ArgumentParser(description="Convert equirectangular video with face swapping")
+parser.add_argument("--frames_folder", help="Frames folder", required=True)
+parser.add_argument("--output_format", help="Output format", default="mp4", choices=["mp4", "mov", "avi"])
 args = parser.parse_args()
 
-frames_folder = args.frames_folder
+frames_folder = os.path.normpath(args.frames_folder)  # Windows compatible
 
 thread_locks = {}
 

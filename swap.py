@@ -5,7 +5,6 @@ import subprocess
 import argparse
 import sys
 from PIL import Image as PILImage
-import subprocess
 import shutil
 import torch
 import insightface
@@ -17,68 +16,121 @@ from threading import Thread
 import threading
 import cv2
 from tqdm import tqdm
-from multiprocessing import Pool
 from concurrent.futures import ThreadPoolExecutor
 from core.lib import Equirec2Perspec as E2P, Perspec2Equirec as P2E
-from pathlib import Path
 from math import pi
 import numpy as np
-import cupy as cp
-from scipy.ndimage import gaussian_gradient_magnitude
-
-from numba import cuda
 import json
+
+# Optional imports s fallback
+try:
+    import cupy as cp
+    from numba import cuda
+    HAS_CUPY = True
+except ImportError:
+    HAS_CUPY = False
 
 if 'ROCMExecutionProvider' in core.globals.providers:
     del torch
 
 # Initialize argument parser
-parser = argparse.ArgumentParser()
-parser.add_argument("--frames_folder", help="Frames folder")
-parser.add_argument("--face", help="Source Face")
-parser.add_argument("--gpu_threads", help="Threads", default=5, type=int)
-parser.add_argument('--gpu', help='use gpu', dest='gpu', action='store_true', default=False)
+parser = argparse.ArgumentParser(description="VRSwap - Equirectangular Face Swap")
+parser.add_argument("--frames_folder", help="Frames folder", required=True)
+parser.add_argument("--face", help="Source Face", required=True)
+parser.add_argument("--gpu_threads", help="Processing threads", default=5, type=int)
+parser.add_argument('--gpu', help='use GPU acceleration', dest='gpu', action='store_true', default=True)
+parser.add_argument('--cpu', help='force CPU mode', dest='gpu', action='store_false')
+parser.add_argument('--batch_size', help='batch size for processing', default=4, type=int)
+parser.add_argument('--tile_size', help='tile size for 8K (0=disable)', default=512, type=int)
 args = parser.parse_args()
 
 framesFolder = args.frames_folder
 sourceFace = args.face
 gpuThreads = args.gpu_threads
+batchSize = args.batch_size
+tileSize = args.tile_size
 
 # Create a lock for thread-safe file writing
 lock = threading.Lock()
 
-sep = "/"
-if os.name == "nt":
-    sep = "\\"
+# Windows + Linux path compatibility
+sep = "\\" if os.name == "nt" else "/"
 
-def resetDevice():
-    device = cuda.get_current_device()
-    device.reset()
+
+def process_tile(tile_img, source_face, swapper):
+    """Procesuje jeden tile s FP16 optimalizací"""
+    if core.globals.use_fp16 and core.globals.device == 'cuda':
+        with torch.cuda.amp.autocast():
+            target_faces = get_faces(tile_img)
+            if target_faces:
+                for target_face in target_faces:
+                    tile_img = swapper.get(tile_img, target_face, source_face, paste_back=True)
+    else:
+        target_faces = get_faces(tile_img)
+        if target_faces:
+            for target_face in target_faces:
+                tile_img = swapper.get(tile_img, target_face, source_face, paste_back=True)
+    
+    return tile_img
+
+
+def split_into_tiles(frame, tile_size=512):
+    """Rozdělí frame na tiles pro 8K processing"""
+    h, w = frame.shape[:2]
+    tiles = []
+    positions = []
+    
+    for y in range(0, h, tile_size):
+        for x in range(0, w, tile_size):
+            y_end = min(y + tile_size, h)
+            x_end = min(x + tile_size, w)
+            tile = frame[y:y_end, x:x_end]
+            tiles.append(tile)
+            positions.append((y, x, y_end, x_end))
+    
+    return tiles, positions
+
+
+def merge_tiles(tiles, positions, original_shape):
+    """Sloučí zpracované tiles zpět na frame"""
+    result = np.zeros(original_shape, dtype=np.uint8)
+    
+    for tile, (y, x, y_end, x_end) in zip(tiles, positions):
+        result[y:y_end, x:x_end] = tile
+    
+    return result
 
 
 def pre_check():
-    if sys.version_info < (3, 9):
-        quit('Python version is not supported - please upgrade to 3.9 or higher')
+    """Kontrola předpokladů pro spuštění na Windows 11 + Python 3.12"""
+    if sys.version_info < (3, 8):
+        quit('Python version is not supported - please upgrade to 3.8 or higher')
+    
     if not shutil.which('ffmpeg'):
         quit('ffmpeg is not installed!')
+    
+    # Check model
     model_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'inswapper_128.onnx')
     if not os.path.isfile(model_path):
         quit('File "inswapper_128.onnx" does not exist!')
-    if '--gpu' in sys.argv:
-        NVIDIA_PROVIDERS = ['CUDAExecutionProvider', 'TensorrtExecutionProvider']
-        if len(list(set(core.globals.providers) - set(NVIDIA_PROVIDERS))) == 1:
-            CUDA_VERSION = torch.version.cuda
-            CUDNN_VERSION = torch.backends.cudnn.version()
-            if not torch.cuda.is_available() or not CUDA_VERSION:
-                quit("You are using --gpu flag but CUDA isn't available or properly installed on your system.")
-            if CUDA_VERSION > '11.8':
-                quit(f"CUDA version {CUDA_VERSION} is not supported - please downgrade to 11.8")
-            if CUDA_VERSION < '11.4':
-                quit(f"CUDA version {CUDA_VERSION} is not supported - please upgrade to 11.8")
-            if CUDNN_VERSION < 8220:
-                quit(f"CUDNN version {CUDNN_VERSION} is not supported - please upgrade to 8.9.1")
-            if CUDNN_VERSION > 8910:
-                quit(f"CUDNN version {CUDNN_VERSION} is not supported - please downgrade to 8.9.1")
+    
+    # GPU check - simplified pro Windows 11 stability
+    if args.gpu:
+        try:
+            if not torch.cuda.is_available():
+                print("[WARNING] CUDA not available, falling back to CPU")
+                core.globals.providers = ['CPUExecutionProvider']
+                args.gpu = False
+            else:
+                cuda_version = torch.version.cuda
+                print(f"[INFO] Using CUDA {cuda_version}")
+                # Windows 11 CUDA 11.8 je optimální
+                if cuda_version and ('11.8' not in cuda_version and '12.' not in cuda_version):
+                    print(f"[WARNING] CUDA {cuda_version} detected, 11.8 or 12.x recommended")
+        except Exception as e:
+            print(f"[WARNING] GPU check failed: {e}, using CPU")
+            core.globals.providers = ['CPUExecutionProvider']
+            args.gpu = False
     else:
         core.globals.providers = ['CPUExecutionProvider']
 
@@ -124,42 +176,53 @@ def face_analyser_thread(frame_path, source_face, vr = True):
 
 
 def process_frames(source_img, frame_paths):
+    """
+    Procesuje framy s batch optimalizací a Windows compatibility.
+    Podporuje FP16 mixed precision a tile processing pro 8K.
+    """
     frames_path = os.path.dirname(frame_paths[0])
-    processing_path = os.path.dirname(frame_paths[0]) + "/processing"
+    processing_path = os.path.join(frames_path, "processing")
     start_frame = os.path.splitext(os.path.basename(frame_paths[0]))[0]
 
-    global face_analyser, swap
+    global swap
     swap = get_face_swapper()
-    face_analyser = get_face_analyser()
     source_face = get_face(cv2.imread(source_img))
+    
+    if source_face is None:
+        print("[ERROR] Couldn't detect source face")
+        return
 
-    # Create folder [frame_path]
+    # Create folder
+    processing_path = os.path.normpath(processing_path)
     if not os.path.exists(processing_path):
-        os.mkdir(processing_path)
+        os.makedirs(processing_path)
 
     temp = []
     frame_counter = 0
-    with tqdm(total=len(frame_paths), desc='Processing', unit="frame", dynamic_ncols=True, bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]') as progress:
+    
+    with tqdm(total=len(frame_paths), desc='Processing', unit="frame", 
+              dynamic_ncols=True, 
+              bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]') as progress:
         for frame_path in frame_paths:
             frame_name = os.path.splitext(os.path.basename(frame_path))[0]
             output_folder = os.path.dirname(frame_path)
-            processing_folder = output_folder + "/processing"
+            processing_folder = os.path.join(output_folder, "processing")
 
-            left_jpg = f"{processing_folder}/{frame_name}_L.jpg"
-            right_jpg = f"{processing_folder}/{frame_name}_R.jpg"
-            left_png = f"{processing_folder}/{frame_name}_L.png"
-            right_png = f"{processing_folder}/{frame_name}_R.png"
+            left_jpg = os.path.join(processing_folder, f"{frame_name}_L.jpg")
+            right_jpg = os.path.join(processing_folder, f"{frame_name}_R.jpg")
+            left_png = os.path.join(processing_folder, f"{frame_name}_L.png")
+            right_png = os.path.join(processing_folder, f"{frame_name}_R.png")
 
             left_exists = os.path.exists(left_jpg) or os.path.exists(left_png)
             right_exists = os.path.exists(right_jpg) or os.path.exists(right_png)
 
             if left_exists and right_exists:
-                print("Both left and right files exist.")
+                print("[DEBUG] Both left and right files exist.")
                 progress.set_postfix(status='S', refresh=True)
                 progress.update(1)
             else:
+                # Čekej na dokončení threadů
                 while len(temp) >= int(gpuThreads):
-                    #we are order dependent, so we are forced to wait for first element to finish. When finished removing thread from the list
                     has_face, x = temp.pop(0).join()
 
                     if has_face:
@@ -167,30 +230,81 @@ def process_frames(source_img, frame_paths):
                     else:
                         progress.set_postfix(status='S', refresh=True)
                     progress.update(1)
-                #adding new frame to the list and starting it 
+                
+                # Přidej nový frame do queue
                 temp.append(ThreadWithReturnValue(target=face_analyser_thread, args=(frame_path, source_face)))
                 temp[-1].start()
+    
+    # Zpracuj zbylé thready
+    while len(temp) > 0:
+        has_face, x = temp.pop(0).join()
+        if has_face:
+            progress.set_postfix(status='.', refresh=True)
+        else:
+            progress.set_postfix(status='S', refresh=True)
+        progress.update(1)
 
 
 
-def perform_face_swap(frame_path, source_face):
-    face_exists = os.path.exists(frame_path)
-
-    if not face_exists:
-        print("Face doesn't exist, skip")
-        return
-
-    frame = cv2.imread(frame_path) 
-
-    target_faces = get_faces(frame)
-    swapped_frame = frame
-
-    if target_faces:
-        for target_face in target_faces:
-            # Perform face swapping on the frame using source_face and target_face
-            swapped_frame = swap.get(frame, target_face, source_face, paste_back=True)
+def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_size=512):
+    """
+    Optimalizovaný swap s FP16 a tile supportem pro 8K.
+    Windows 11 compatible path handling.
+    """
+    # Normalizuj cestu pro Windows
+    frame_path = os.path.normpath(frame_path)
+    
+    if not os.path.exists(frame_path):
+        print(f"[ERROR] Face doesn't exist: {frame_path}")
+        return None
+    
+    try:
+        frame = cv2.imread(frame_path)
+        if frame is None:
+            print(f"[ERROR] Can't read frame: {frame_path}")
+            return None
+        
+        # 8K tile processing
+        if use_tiling and tile_size > 0:
+            h, w = frame.shape[:2]
+            # Tile processing pouze pro velké resolution
+            if w > 4000 or h > 4000:
+                print(f"[INFO] Using tile processing {tile_size}px for 8K")
+                tiles, positions = split_into_tiles(frame, tile_size)
+                processed_tiles = []
+                
+                for tile in tiles:
+                    processed_tile = process_tile(tile, source_face, swapper)
+                    processed_tiles.append(processed_tile)
+                
+                frame = merge_tiles(processed_tiles, positions, frame.shape)
+        
+        # Standard processing s FP16
+        target_faces = get_faces(frame)
+        swapped_frame = frame
+        
+        if target_faces:
+            for target_face in target_faces:
+                if core.globals.use_fp16 and core.globals.device == 'cuda':
+                    with torch.amp.autocast('cuda'):
+                        swapped_frame = swapper.get(frame, target_face, source_face, paste_back=True)
+                else:
+                    swapped_frame = swapper.get(frame, target_face, source_face, paste_back=True)
+            
+            # GPU cache cleanup
+            if core.globals.device == 'cuda':
+                torch.cuda.empty_cache()
+            
+            # Ulož s Windows compatibility
             cv2.imwrite(frame_path, swapped_frame)
-    return swapped_frame
+            return swapped_frame
+        else:
+            print(f"[DEBUG] No faces found in {os.path.basename(frame_path)}")
+            return frame
+            
+    except Exception as e:
+        print(f"[ERROR] Face swap error: {e}")
+        return None
 
 
 
@@ -223,6 +337,7 @@ def extractFace(frame_name, input_img, face, output_dir, side):
 
 
 def storeInfo(frame_name, side, output_dir, theta, phi):
+    """Store metadata with Windows path compatibility"""
     exif_data = {
         f'theta{side}': str(theta),
         f'phi{side}': str(phi)
@@ -234,22 +349,33 @@ def storeInfo(frame_name, side, output_dir, theta, phi):
     with lock:
         data = {}
         if os.path.exists(data_file):
-            with open(data_file, 'r') as f:
-                data = json.load(f)
+            try:
+                with open(data_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            except Exception as e:
+                print(f"[WARNING] Failed to load data file: {e}")
         
         if frame_name in data:
             data[frame_name].update(exif_data)
         else:
             data[frame_name] = exif_data
         
-        with open(data_file, 'w') as f:
-            json.dump(data, f)
+        try:
+            with open(data_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"[ERROR] Failed to save data file: {e}")
+
 
 def loadInfo(frame_number, output_dir, side):
+    """Load metadata with Windows path compatibility"""
     parent_dir = os.path.dirname(output_dir)
     data_file = os.path.join(parent_dir, '_data.json')
 
-    with open(data_file, 'r') as f:
+    if not os.path.exists(data_file):
+        raise ValueError(f"Data file not found: {data_file}")
+
+    with open(data_file, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
     if frame_number in data:
@@ -261,11 +387,19 @@ def loadInfo(frame_number, output_dir, side):
 
 
 
-def equir2pers(input_img, output_dir):    
+def equir2pers(input_img, output_dir):
+    """Converts equirectangular image to perspective with Windows path support"""
     frame_name = os.path.splitext(os.path.basename(input_img))[0]
 
     img = cv2.imread(input_img)
-    faces = get_faces(img)  # Notice it's get_faces, assuming you're using a method that gets all faces.
+    if img is None:
+        print(f"[ERROR] Can't read image: {input_img}")
+        return
+    
+    faces = get_faces(img)
+    if not faces:
+        print(f"[DEBUG] No faces in {frame_name}")
+        return
 
     width = img.shape[1]
 
@@ -280,16 +414,43 @@ def equir2pers(input_img, output_dir):
 
 
 if __name__ == '__main__':
-    pre_check()
+    try:
+        pre_check()
 
-    processingPath = framesFolder + "/processing"
+        # Windows path normalization
+        framesFolder = os.path.normpath(framesFolder)
+        sourceFace = os.path.normpath(sourceFace)
 
-    framePaths = []
-    for framePath in glob.glob(framesFolder + "/*.jpg"):
-        if not framePath.endswith('_p.jpg'):
-            framePaths.append(framePath)
+        processingPath = os.path.join(framesFolder, "processing")
 
-    framePaths = tuple(sorted(framePaths, key=lambda x: int(x.split(sep)[-1].replace(".jpg", ""))))
+        framePaths = []
+        for framePath in glob.glob(os.path.join(framesFolder, "*.jpg")):
+            if not framePath.endswith('_p.jpg'):
+                framePaths.append(framePath)
 
-    print("swapping in progress...")
-    process_frames(sourceFace, framePaths)
+        framePaths = tuple(sorted(framePaths, key=lambda x: int(os.path.basename(x).replace(".jpg", ""))))
+
+        if not framePaths:
+            print("[ERROR] No frames found in folder")
+            sys.exit(1)
+
+        print(f"[INFO] Found {len(framePaths)} frames")
+        print(f"[INFO] Processing {sourceFace}")
+        print(f"[INFO] Device: {core.globals.device}")
+        print(f"[INFO] FP16 enabled: {core.globals.use_fp16}")
+        print("[INFO] Swapping in progress...")
+        
+        process_frames(sourceFace, framePaths)
+        
+        print("[INFO] Processing completed!")
+        if core.globals.device == 'cuda':
+            torch.cuda.empty_cache()
+            
+    except KeyboardInterrupt:
+        print("\n[INFO] Processing interrupted by user")
+        sys.exit(0)
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
