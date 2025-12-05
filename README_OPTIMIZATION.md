@@ -28,20 +28,28 @@ Kompletní optimalizace projektu **bez vytváření nových souborů** - pouze m
 ## 🚀 Quick Start
 
 ```bash
-# 1. Vytvoř Conda environment (všechno v jednom příkazu)
+# 1. Vytvoř Conda environment
 conda env create -f environment.yml
 conda activate vrswap
 
 # 2. Stáhni ONNX model
 # inswapper_128.onnx
 
-# 3. Extrahuj frames
+# 3a. EASIEST WAY - All in one command! 🎉
+# Just provide video + folder with faces
+python process_video.py --video input.mp4 --faces ./faces --output output.mp4
+
+# Or with optimization
+python process_video.py --video video.mp4 --faces faces/ --output result.mp4 --gpu --gpu_threads 5
+
+# 3b. MANUAL WAY (if you prefer)
+# Extract frames
 ffmpeg -i video.mp4 -f image2 frames\%06d.jpg
 
-# 4. Spusť face swap (optimalizovaný pro RTX 4060 Ti)
+# Run face swap
 python swap.py --frames_folder frames --face source.jpg --gpu
 
-# 5. Konvertuj zpět
+# Convert back
 ffmpeg -framerate 30 -i frames\%06d.jpg output.mp4
 ```
 

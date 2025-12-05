@@ -1,5 +1,34 @@
 # VRSwap Commands - Windows 11 Quick Reference
 
+## 🚀 SIMPLEST WAY - process_video.py (NEW!)
+
+All in one command! No manual FFmpeg needed.
+
+```cmd
+conda activate vrswap
+
+REM Basic usage
+python process_video.py --video input.mp4 --faces ./faces --output output.mp4
+
+REM With GPU optimization
+python process_video.py --video video.mp4 --faces faces/ --output result.mp4 --gpu --gpu_threads 5
+
+REM 8K with tiles
+python process_video.py --video 8k.mp4 --faces faces/ --output 8k_out.mp4 --gpu --tile_size 512
+
+REM CPU only
+python process_video.py --video video.mp4 --faces faces/ --output output.mp4 --cpu
+```
+
+**That's it!** The script does:
+1. ✅ Extracts frames from video
+2. ✅ Detects faces in each frame
+3. ✅ Swaps with all faces from folder
+4. ✅ Encodes back to video
+5. ✅ Cleans up temporary files
+
+---
+
 ## Initial Setup (First Time)
 
 ```cmd

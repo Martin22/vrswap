@@ -87,16 +87,23 @@
 
 📝 EXAMPLE USAGE
 
-  # Extract frames from video
-  ffmpeg -i video.mp4 -f image2 frames\%06d.jpg
+  # EASIEST WAY - All in one! 🎉
+  python process_video.py --video input.mp4 --faces ./faces --output output.mp4
 
-  # Run face swap (GPU optimized)
-  python swap.py --frames_folder frames --face source.jpg --gpu
+  # With GPU optimization
+  python process_video.py --video video.mp4 --faces faces/ --output result.mp4 --gpu --gpu_threads 5
 
-  # Convert back to video
-  ffmpeg -framerate 30 -i frames\%06d.jpg output.mp4
+  # 8K with tiles
+  python process_video.py --video 8k.mp4 --faces faces/ --output 8k_out.mp4 --gpu --tile_size 512
 
-  That's it! See COMMANDS_REFERENCE.md for more examples.
+  The script handles everything:
+  ✓ Extract frames
+  ✓ Detect faces
+  ✓ Swap with all source faces
+  ✓ Encode to video
+  ✓ Cleanup temp files
+
+  Or use COMMANDS_REFERENCE.md for more examples.
 
 ─────────────────────────────────────────────────────────────────────────────
 
