@@ -15,29 +15,31 @@ High-performance face swapping solution optimized for 360° panoramic videos, VR
 ## Installation
 
 ### Prerequisites
-- **Python 3.12+** (Windows/Linux/WSL)
-- **CUDA 12.6** (recommended for RTX 40-series) or **CUDA 11.8+** (for older cards)
+- **Python 3.11** (Python 3.12 has compatibility issues - use 3.11)
+- **CUDA 12.1** (recommended) or **CUDA 11.8+** (for older GPUs)
 - **FFmpeg** (for video processing)
 - **GPU**: RTX 2060+ recommended (6GB+ VRAM)
 
-### Windows Setup (RTX 4060 Ti + CUDA 12.6)
+### Windows Setup (RTX 4060 Ti + Python 3.11 + CUDA 12.1)
+
+**✅ TESTED AND WORKING** (with RTX 4060 Ti):
 
 ```bash
-# 1. Create Conda environment with PyTorch CUDA (simplest - let conda choose versions)
-conda create -n vrswap python=3.12 pytorch torchvision torchaudio pytorch-cuda -c pytorch -y
+# Create environment with all CUDA components
+conda create -n vrswap python=3.11 pytorch torchvision torchaudio pytorch-cuda=12.1 cuda-toolkit=12.1 cudnn -c pytorch -c nvidia -c conda-forge -y
 conda activate vrswap
 
-# 2. VERIFY GPU works
+# VERIFY GPU works
 python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
 # Should print: CUDA available: True
 
-# 3. Install other dependencies (torch/torchvision NOT in requirements.txt)
+# Install other dependencies (torch NOT in requirements.txt)
 pip install -r requirements.txt
 
-# 4. Install ONNX Runtime GPU
+# Install ONNX Runtime GPU
 pip install onnxruntime-gpu==1.17.0
 
-# 5. Install FFmpeg
+# Install FFmpeg
 choco install ffmpeg -y
 # OR manually: Download from https://ffmpeg.org/download.html and add to PATH
 ```
@@ -45,38 +47,35 @@ choco install ffmpeg -y
 **Verify complete setup:**
 ```bash
 python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
-# Should print: CUDA: True
-
 python -c "import onnxruntime; print(f'ONNX: {onnxruntime.__version__}')"
 ffmpeg -version
 ```
 
-**If that fails, try without pytorch-cuda specifier:**
+**If CUDA 12.1 fails, try CUDA 11.8:**
 ```bash
 conda env remove -n vrswap -y
-conda create -n vrswap python=3.12 pytorch torchvision torchaudio -c pytorch -y
+conda create -n vrswap python=3.11 pytorch torchvision torchaudio pytorch-cuda=11.8 cuda-toolkit=11.8 cudnn -c pytorch -c nvidia -c conda-forge -y
 conda activate vrswap
-python -c "import torch; print(torch.cuda.is_available())"
 ```
 
 ### Linux/WSL Setup
 
 ```bash
-# 1. Create Conda environment with PyTorch CUDA
-conda create -n vrswap python=3.12 pytorch torchvision torchaudio pytorch-cuda -c pytorch -y
+# Create environment with CUDA 12.1 (same as Windows)
+conda create -n vrswap python=3.11 pytorch torchvision torchaudio pytorch-cuda=12.1 cuda-toolkit=12.1 cudnn -c pytorch -c nvidia -c conda-forge -y
 conda activate vrswap
 
-# 2. Verify GPU works
+# Verify GPU works
 python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
 
-# 3. Install other dependencies
+# Install other dependencies
 pip install -r requirements.txt
 
-# 4. Install FFmpeg
+# Install FFmpeg
 sudo apt-get update && sudo apt-get install ffmpeg -y
 
-# 5. Verify everything
-python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
+# Verify everything
+python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
 ffmpeg -version
 ```
 
@@ -88,34 +87,34 @@ ffmpeg -version
 
 **Solution** (try in order):
 
-1. **Start fresh** - Remove environment and reinstall:
+1. **Use Python 3.11 + CUDA 12.1** (tested working):
    ```bash
    conda env remove -n vrswap -y
-   conda create -n vrswap python=3.12 pytorch torchvision torchaudio pytorch-cuda -c pytorch -y
+   conda create -n vrswap python=3.11 pytorch torchvision torchaudio pytorch-cuda=12.1 cuda-toolkit=12.1 cudnn -c pytorch -c nvidia -c conda-forge -y
    conda activate vrswap
    python -c "import torch; print(torch.cuda.is_available())"
    ```
 
-2. **Try with CUDA 11.8** if above fails:
+2. **Try CUDA 11.8 if 12.1 fails**:
    ```bash
    conda env remove -n vrswap -y
-   conda create -n vrswap python=3.12 pytorch torchvision torchaudio pytorch-cuda=11.8 -c pytorch -y
+   conda create -n vrswap python=3.11 pytorch torchvision torchaudio pytorch-cuda=11.8 cuda-toolkit=11.8 cudnn -c pytorch -c nvidia -c conda-forge -y
    conda activate vrswap
    python -c "import torch; print(torch.cuda.is_available())"
    ```
 
-3. **Try without specifying CUDA version** (let conda choose):
+3. **Do NOT use Python 3.12** - it has compatibility issues with some packages:
    ```bash
-   conda env remove -n vrswap -y
-   conda create -n vrswap python=3.12 pytorch torchvision torchaudio -c pytorch -y
-   conda activate vrswap
-   python -c "import torch; print(torch.cuda.is_available())"
+   # Wrong - don't use this
+   # conda create -n vrswap python=3.12 ...
+   
+   # Always use Python 3.11 instead
    ```
 
-4. **Check what PyTorch installed**:
+4. **Check what installed**:
    ```bash
-   conda list | grep torch
-   # Should show pytorch with cuda in the build string, like "pytorch-cuda"
+   conda list | grep -E "torch|cuda|python"
+   # Should show python=3.11.x, pytorch, pytorch-cuda, cudatoolkit
    ```
 
 5. **Check conda channels**:
@@ -459,4 +458,4 @@ For issues:
 
 ---
 
-**Last Updated**: 2024 | **Python**: 3.12+ | **PyTorch**: 2.1.0+ | **CUDA**: 12.6 (or 11.8+ for older GPUs)
+**Last Updated**: 2024 | **Python**: 3.11 | **PyTorch**: 2.0+ | **CUDA**: 12.1 (tested and working)
