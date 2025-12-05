@@ -221,7 +221,56 @@ class AdvancedFaceBlender:
         result = cv2.seamlessClone(swapped_resized, frame, mask[:,:,0], center, method)
         
         return result
-
+    
+    @staticmethod
+    def blur_face_edges(frame, bbox, blur_strength=15):
+        """Post-processing: blur hrany swapped tváře pro eliminaci tvrdých okrajů
+        
+        Args:
+            frame: Frame s aplikovaným swapem (paste_back=True)
+            bbox: Bounding box tváře (x1, y1, x2, y2)
+            blur_strength: Síla bluuru (10-20 dobrý rozsah)
+        
+        Returns:
+            Frame s rozmazanými okraji
+        """
+        if not isinstance(frame, np.ndarray):
+            return frame
+        
+        try:
+            x1, y1, x2, y2 = [int(v) for v in bbox]
+            h, w = y2 - y1, x2 - x1
+            
+            if h <= 0 or w <= 0 or x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
+                return frame
+            
+            # Vytvoř masku s Gaussianem - maska pro okraje
+            mask = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.float32)
+            mask[y1:y2, x1:x2] = 1.0
+            
+            # Aplikuj Gaussian blur - parametry dle Rope-next
+            kernel_size = blur_strength * 2 + 1
+            sigma = (blur_strength + 1) * 0.2
+            
+            if kernel_size % 2 == 0:
+                kernel_size += 1
+            
+            # Rozmazej masku na okrajích
+            mask_soft = cv2.GaussianBlur(mask, (kernel_size, kernel_size), sigma)
+            mask_soft = np.clip(mask_soft, 0, 1)
+            
+            # Vytvoř blurred verzi framu (rozmazaný frame)
+            frame_blurred = cv2.GaussianBlur(frame, (5, 5), 1.5)
+            
+            # Blend - u okrajů použij rozmazanou verzi, uprostřed swap
+            mask_3ch = np.stack([mask_soft] * 3, axis=-1)
+            result = frame.astype(np.float32) * mask_3ch + frame_blurred.astype(np.float32) * (1 - mask_3ch)
+            
+            return np.clip(result, 0, 255).astype(np.uint8)
+        
+        except Exception as e:
+            print(f"[DEBUG] Blur edges error: {e}")
+            return frame
 
 class TileBlender:
     """Blending pro tile-based processing (8K video)"""
@@ -319,53 +368,3 @@ class TileBlender:
                 positions.append((y, x, y_end, x_end))
         
         return tiles, positions
-    
-    @staticmethod
-    def blur_face_edges(frame, bbox, blur_strength=15):
-        """Post-processing: blur hrany swapped tváře pro eliminaci tvrdých okrajů
-        
-        Args:
-            frame: Frame s aplikovaným swapem (paste_back=True)
-            bbox: Bounding box tváře (x1, y1, x2, y2)
-            blur_strength: Síla bluuru (10-20 dobrý rozsah)
-        
-        Returns:
-            Frame s rozmazanými okraji
-        """
-        if not isinstance(frame, np.ndarray):
-            return frame
-        
-        try:
-            x1, y1, x2, y2 = [int(v) for v in bbox]
-            h, w = y2 - y1, x2 - x1
-            
-            if h <= 0 or w <= 0 or x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
-                return frame
-            
-            # Vytvoř masku s Gaussianem - maska pro okraje
-            mask = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.float32)
-            mask[y1:y2, x1:x2] = 1.0
-            
-            # Aplikuj Gaussian blur - parametry dle Rope-next
-            kernel_size = blur_strength * 2 + 1
-            sigma = (blur_strength + 1) * 0.2
-            
-            if kernel_size % 2 == 0:
-                kernel_size += 1
-            
-            # Rozmazej masku na okrajích
-            mask_soft = cv2.GaussianBlur(mask, (kernel_size, kernel_size), sigma)
-            mask_soft = np.clip(mask_soft, 0, 1)
-            
-            # Vytvoř blurred verzi framu (rozmazaný frame)
-            frame_blurred = cv2.GaussianBlur(frame, (5, 5), 1.5)
-            
-            # Blend - u okrajů použij rozmazanou verzi, uprostřed swap
-            mask_3ch = np.stack([mask_soft] * 3, axis=-1)
-            result = frame.astype(np.float32) * mask_3ch + frame_blurred.astype(np.float32) * (1 - mask_3ch)
-            
-            return np.clip(result, 0, 255).astype(np.uint8)
-        
-        except Exception as e:
-            print(f"[DEBUG] Blur edges error: {e}")
-            return frame
