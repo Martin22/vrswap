@@ -23,36 +23,43 @@ High-performance face swapping solution optimized for 360° panoramic videos, VR
 ### Windows Setup (RTX 4060 Ti + CUDA 12.6)
 
 ```bash
-# 1. Create Conda environment
-conda create -n vrswap python=3.12 -y
+# 1. Create Conda environment with PyTorch + CUDA bundled together (simplest approach)
+conda create -n vrswap python=3.12 pytorch pytorch-cuda=12.6 torchvision torchaudio -c pytorch -c nvidia -y
 conda activate vrswap
 
-# 2. Install PyTorch with CUDA 12.6 (MUST be done BEFORE pip install!)
-conda install pytorch torchvision torchaudio pytorch-cuda=12.6 -c pytorch -c nvidia -y
+# 2. VERIFY GPU works
+python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
+# Should print: CUDA available: True
 
-# 3. VERIFY GPU works before continuing
-python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
-
-# 4. Install other dependencies (torch is NOT in requirements.txt)
+# 3. Install other dependencies (torch/torchvision NOT in requirements.txt)
 pip install -r requirements.txt
 
-# 5. Install ONNX Runtime GPU
-pip uninstall onnxruntime -y
+# 4. Install ONNX Runtime GPU
 pip install onnxruntime-gpu==1.17.0
 
-# 6. Install FFmpeg
+# 5. Install FFmpeg
 choco install ffmpeg -y
 # OR manually: Download from https://ffmpeg.org/download.html and add to PATH
 ```
 
 **Verify complete setup:**
 ```bash
-python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')"
-# Should print: CUDA available: True
+python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {torch.cuda.is_available()}')"
+# Should print: CUDA: True
 
-python -c "import onnxruntime; print(f'ONNX Runtime: {onnxruntime.__version__}')"
+python -c "import onnxruntime; print(f'ONNX: {onnxruntime.__version__}')"
 ffmpeg -version
 ```
+
+**If CUDA still shows False:**
+- Try CUDA 11.8 instead:
+  ```bash
+  conda create -n vrswap python=3.12 pytorch pytorch-cuda=11.8 torchvision torchaudio -c pytorch -c nvidia -y
+  ```
+- Or check available CUDA versions:
+  ```bash
+  conda search pytorch-cuda -c pytorch
+  ```
 
 ### Linux/WSL Setup
 
@@ -94,22 +101,26 @@ ffmpeg -version
    # Should NOT contain "cpu"
    ```
 
-3. Reinstall PyTorch GPU (must use conda, not pip):
+2. **Try different CUDA version** - conda might not have 12.6 available on all platforms:
    ```bash
-   conda uninstall pytorch torchvision torchaudio -y
-   conda install pytorch torchvision torchaudio pytorch-cuda=12.6 -c pytorch -c nvidia -y
-   ```
-
-4. Verify BEFORE running pip:
-   ```bash
+   # Try CUDA 11.8
+   conda create -n vrswap python=3.12 pytorch pytorch-cuda=11.8 torchvision torchaudio -c pytorch -c nvidia -y
+   conda activate vrswap
    python -c "import torch; print(torch.cuda.is_available())"
-   # MUST be True!
    ```
 
-5. Check NVIDIA drivers:
+3. **Check available CUDA versions**:
    ```bash
-   nvidia-smi
-   # Should show your GPU and CUDA version
+   conda search pytorch-cuda -c pytorch
+   # Pick one and use in conda create command
+   ```
+
+4. **Reinstall from scratch** (if already installed wrong version):
+   ```bash
+   conda env remove -n vrswap
+   conda create -n vrswap python=3.12 pytorch pytorch-cuda=12.6 torchvision torchaudio -c pytorch -c nvidia -y
+   conda activate vrswap
+   python -c "import torch; print(torch.cuda.is_available())"
    ```
 
 **Problem: NumPy error `AttributeError: module 'pkgutil' has no attribute 'ImpImporter'`**
@@ -124,7 +135,6 @@ pip install --upgrade numpy>=1.26.0
 
 **Problem: `ONNX Runtime is CPU-only`**
 ```bash
-pip uninstall onnxruntime -y
 pip install onnxruntime-gpu==1.17.0
 ```
 
