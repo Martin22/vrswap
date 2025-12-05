@@ -117,9 +117,9 @@ class AdvancedFaceBlender:
         mask = np.ones((h, w), dtype=np.float32)
         
         # Aplikuj Gaussianův blur pro měkké okraje
-        # Größer kernel = měkčí přechod (30-50 je dobrý)
-        kernel_size = 31  # Musí být lichý
-        sigma = 10  # Sigma pro Gaussianův blur
+        # Parametry dle Rope-next: kernel = blur*2+1, sigma = (blur+1)*0.2, blur=15
+        kernel_size = 15 * 2 + 1  # 31
+        sigma = (15 + 1) * 0.2      # 3.2
         
         mask = cv2.GaussianBlur(mask, (kernel_size, kernel_size), sigma)
         mask = np.clip(mask, 0, 1)

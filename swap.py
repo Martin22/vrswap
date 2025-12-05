@@ -12,6 +12,7 @@ import core.globals
 from pathlib import Path
 from core.swapper import get_face_swapper
 from core.analyser import get_face, get_faces, get_face_analyser
+from core.advanced_blending import AdvancedFaceBlender
 from threading import Thread
 import threading
 import cv2
@@ -251,9 +252,13 @@ def process_frames(source_img, frame_paths):
                 for target_face in target_faces:
                     if core.globals.use_fp16 and core.globals.device == 'cuda':
                         with torch.autocast('cuda'):
-                            result = swapper.get(result, target_face, source_face, paste_back=True)
+                            swapped = swapper.get(frame, target_face, source_face, paste_back=False)
                     else:
-                        result = swapper.get(result, target_face, source_face, paste_back=True)
+                        swapped = swapper.get(frame, target_face, source_face, paste_back=False)
+                    
+                    # Aplikuj pokročilý blend - eliminuje rámečky
+                    bbox = target_face.bbox
+                    result = AdvancedFaceBlender.blend_faces_advanced(result, swapped, bbox, expand_ratio=1.35)
                 
                 # Ulož
                 cv2.imwrite(frame_path, result)
@@ -295,7 +300,9 @@ def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_s
         result = frame.copy()
         
         for target_face in target_faces:
-            result = swapper.get(result, target_face, source_face, paste_back=True)
+            swapped = swapper.get(result, target_face, source_face, paste_back=False)
+            bbox = target_face.bbox
+            result = AdvancedFaceBlender.blend_faces_advanced(result, swapped, bbox, expand_ratio=1.35)
         
         cv2.imwrite(frame_path, result)
         return result
