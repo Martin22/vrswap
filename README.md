@@ -63,7 +63,10 @@ sudo apt-get update && sudo apt-get install ffmpeg -y
 ```bash
 python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}')"
 python -c "import onnxruntime; print(f'ONNX Runtime: {onnxruntime.__version__}')"
+python -c "import numpy; print(f'NumPy {numpy.__version__}')"
 ```
+
+**Note**: If you get `AttributeError: module 'pkgutil' has no attribute 'ImpImporter'` during numpy install, it means the numpy version is too old for Python 3.12. The requirements.txt uses compatible versions (numpy>=1.26.0).
 
 ## Quick Start
 
@@ -276,15 +279,16 @@ vrswap/
 
 ## Dependencies
 
-Key packages (see requirements.txt for complete list):
-- **PyTorch 2.1.0** - Deep learning framework with CUDA support
-- **ONNX Runtime 1.16.0** - Fast inference engine
-- **InsightFace 0.7.3** - Face detection and recognition
-- **OpenCV 4.8.0** - Image/video processing
+Key packages (all tested and compatible with Python 3.12):
+- **PyTorch 2.1.0+** - Deep learning framework with CUDA support
+- **ONNX Runtime 1.17.0+** - Fast inference engine
+- **InsightFace 0.7.3+** - Face detection and recognition
+- **OpenCV 4.8.0+** - Image/video processing
+- **NumPy 1.26.0+** - Required for Python 3.12 compatibility (1.24.x is too old)
 - **RealESRGAN/BasicSR** - Super-resolution upscaling
-- **TensorFlow 2.13.0** - CodeFormer enhancement
+- **TensorFlow 2.14.0+** - CodeFormer enhancement
 
-All tested and working with Python 3.12.
+See requirements.txt for complete list with version constraints.
 
 ## System Requirements
 
