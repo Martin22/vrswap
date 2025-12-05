@@ -199,9 +199,13 @@ class VideoProcessor:
                                     if core.globals.use_fp16 and core.globals.device == 'cuda':
                                         import torch
                                         with torch.autocast('cuda'):
-                                            frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                            swapped = self.swapper.get(frame, target_face, source_face, paste_back=False)
                                     else:
-                                        frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                        swapped = self.swapper.get(frame, target_face, source_face, paste_back=False)
+                                    
+                                    # Advanced blending - eliminuje artefakty
+                                    bbox = target_face.bbox
+                                    frame = AdvancedFaceBlender.blend_faces_advanced(frame, swapped, bbox, expand_ratio=1.35, use_color_match=(not self.fast_mode))
                                 except Exception as e:
                                     print(f"[DEBUG] Swap error: {e}")
                                     import traceback

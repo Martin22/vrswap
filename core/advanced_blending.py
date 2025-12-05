@@ -75,7 +75,7 @@ class AdvancedFaceBlender:
         
         Args:
             frame: Původní frame
-            swapped_face: Swappovaná tvář
+            swapped_face: Swappovaná tvář (paste_back=False output)
             bbox: Bounding box (x1, y1, x2, y2)
             expand_ratio: Kolik pixelů rozšířit bbox pro měkký blend
             use_color_match: Použít color matching (pomalejší, ale lepší kvalita)
@@ -89,49 +89,56 @@ class AdvancedFaceBlender:
         if not isinstance(swapped_face, np.ndarray):
             return frame
         
+        # Zkontroluj validní velikost
+        if frame.shape[0] <= 0 or frame.shape[1] <= 0:
+            return frame
+        if swapped_face.shape[0] <= 0 or swapped_face.shape[1] <= 0:
+            return frame
+        
         x1, y1, x2, y2 = [int(v) for v in bbox]
         h, w = y2 - y1, x2 - x1
         
-        # Zkontroluj dimenzi
-        if h <= 0 or w <= 0 or swapped_face.shape[0] <= 0 or swapped_face.shape[1] <= 0:
+        # Zkontroluj bbox validitu
+        if h <= 0 or w <= 0:
             return frame
         
-        # Zvětšit bbox pro soft blend region
-        expand_h = int(h * expand_ratio)
-        expand_w = int(w * expand_ratio)
-        
-        y1_expanded = max(0, y1 - expand_h)
-        x1_expanded = max(0, x1 - expand_w)
-        y2_expanded = min(frame.shape[0], y2 + expand_h)
-        x2_expanded = min(frame.shape[1], x2 + expand_w)
-        
-        # Vytvořit masku pro blend
-        blend_mask = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.float32)
-        blend_mask[y1:y2, x1:x2] = 1.0
-        
-        # Gaussian blur pro měkké přechody
-        blend_mask = cv2.GaussianBlur(blend_mask, (51, 51), 21)
-        blend_mask = np.clip(blend_mask, 0, 1)
-        
-        # Sklon masky na okrajích
-        blend_mask_3d = np.stack([blend_mask] * 3, axis=-1)
-        
-        # Resize swapped_face aby seděl
+        # Resize swapped_face aby seděl do bbox
         try:
-            swapped_resized = cv2.resize(swapped_face, (x2-x1, y2-y1))
+            swapped_resized = cv2.resize(swapped_face, (w, h), interpolation=cv2.INTER_LINEAR)
         except Exception as e:
-            print(f"[DEBUG] Resize error: {e}, swapped_face shape: {swapped_face.shape if hasattr(swapped_face, 'shape') else 'unknown'}")
+            print(f"[DEBUG] Resize error: {e}")
             return frame
         
-        # Vytvořit canvas pro swap
-        swap_canvas = frame.copy().astype(np.float32)
-        swap_canvas[y1:y2, x1:x2] = swapped_resized.astype(np.float32)
+        # Vytvořit měkkou masku s Gaussianem
+        mask = np.zeros((h, w), dtype=np.float32)
+        mask[:, :] = 1.0
         
-        # Alpha blend
-        result = (frame.astype(np.float32) * (1 - blend_mask_3d) + 
-                 swap_canvas * blend_mask_3d)
+        # Gaussian feathering na okrajích
+        kernel_size = min(w, h) // 4
+        if kernel_size > 1 and kernel_size % 2 == 0:
+            kernel_size += 1
         
-        return np.clip(result, 0, 255).astype(np.uint8)
+        # Vytvoř gradient masku
+        for i in range(h):
+            for j in range(w):
+                dist_y = min(i, h - 1 - i) / h
+                dist_x = min(j, w - 1 - j) / w
+                mask[i, j] = min(dist_y, dist_x) * 2.0
+        
+        mask = cv2.GaussianBlur(mask, (kernel_size, kernel_size), kernel_size // 2)
+        mask = np.clip(mask, 0, 1)
+        
+        # Umístění do frameu
+        frame_out = frame.copy().astype(np.float32)
+        
+        # Blend: původní frame + swapped tvář s maskou
+        for c in range(3):
+            frame_out[y1:y2, x1:x2, c] = (
+                frame[y1:y2, x1:x2, c].astype(np.float32) * (1 - mask) +
+                swapped_resized[:, :, c].astype(np.float32) * mask
+            )
+        
+        return np.clip(frame_out, 0, 255).astype(np.uint8)
     
     @staticmethod
     def color_match_faces(swapped_face, original_face_region, blend_strength=0.7):
