@@ -8,7 +8,7 @@ FACE_ANALYSER = None
 def get_face_analyser():
     """
     Vrací optimalizovaný face analyser.
-    Windows 11 + Python 3.12 compatible.
+    OPRAVENO: Zvětšen det_size z 640x640 na 896x896 pro lepší detekci.
     """
     global FACE_ANALYSER
     if FACE_ANALYSER is None:
@@ -33,9 +33,9 @@ def get_face_analyser():
                 providers=core.globals.providers
             )
             
-            # Prepare with appropriate context
+            # OPRAVENO: Zvětšen det_size z 640x640 na 896x896
             ctx_id = 0 if core.globals.device == 'cuda' else -1
-            FACE_ANALYSER.prepare(ctx_id=ctx_id, det_size=(640, 640))
+            FACE_ANALYSER.prepare(ctx_id=ctx_id, det_size=(896, 896))
             
         except Exception as e:
             print(f"Face analyzer init error: {e}")

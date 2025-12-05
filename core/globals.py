@@ -5,23 +5,30 @@ import platform
 use_gpu = False
 providers = onnxruntime.get_available_providers()
 
-# Remove suboptimal providers for Windows stability
-# if 'TensorrtExecutionProvider' in providers:
-#     providers.remove('TensorrtExecutionProvider')
-
-# Přidat CPU executor na konec pro fallback (důležité pro Windows)
+# Přidat CPU executor na konec pro fallback
 if 'CPUExecutionProvider' not in providers:
     providers.append('CPUExecutionProvider')
 
 # GPU optimization (Windows compatible)
+device = 'cpu'
+use_fp16 = False
+
 try:
     import torch
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    use_fp16 = torch.cuda.is_available()  # FP16 jen na CUDA
     
-    # GPU Settings (auto-detect)
+    # OPRAVENO: FP16 má fallback na FP32 pokud se nezdaří
     if torch.cuda.is_available():
-        # TensorFloat-32 optimization (safe on all GPUs)
+        try:
+            # Test FP16 compatibility
+            test_tensor = torch.randn(1, 3, 256, 256, device='cuda', dtype=torch.float16)
+            del test_tensor
+            use_fp16 = True
+        except Exception as e:
+            print(f"[WARNING] FP16 not supported on this GPU, falling back to FP32: {e}")
+            use_fp16 = False
+        
+        # GPU Settings (auto-detect)
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.allow_tf32 = True
@@ -35,3 +42,4 @@ try:
 except ImportError:
     device = 'cpu'
     use_fp16 = False
+

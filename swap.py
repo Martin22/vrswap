@@ -21,6 +21,7 @@ from core.lib import Equirec2Perspec as E2P, Perspec2Equirec as P2E
 from math import pi
 import numpy as np
 import json
+from core.advanced_blending import AdvancedFaceBlender
 
 # Optional imports s fallback
 try:
@@ -75,13 +76,16 @@ def process_tile(tile_img, source_face, swapper):
 
 
 def split_into_tiles(frame, tile_size=512):
-    """Rozdělí frame na tiles pro 8K processing"""
+    """Rozdělí frame na tiles s overlapem pro měkký blend"""
     h, w = frame.shape[:2]
     tiles = []
     positions = []
     
-    for y in range(0, h, tile_size):
-        for x in range(0, w, tile_size):
+    overlap = 50  # Overlap pro blending
+    step = tile_size - overlap
+    
+    for y in range(0, h, step):
+        for x in range(0, w, step):
             y_end = min(y + tile_size, h)
             x_end = min(x + tile_size, w)
             tile = frame[y:y_end, x:x_end]
@@ -92,13 +96,46 @@ def split_into_tiles(frame, tile_size=512):
 
 
 def merge_tiles(tiles, positions, original_shape):
-    """Sloučí zpracované tiles zpět na frame"""
-    result = np.zeros(original_shape, dtype=np.uint8)
+    """Sloučí zpracované tiles s overlap blending - OPRAVENO"""
+    result = np.zeros(original_shape, dtype=np.float32)
+    weight_sum = np.zeros(original_shape[:2], dtype=np.float32)
+    
+    overlap = 50
     
     for tile, (y, x, y_end, x_end) in zip(tiles, positions):
-        result[y:y_end, x:x_end] = tile
+        h = y_end - y
+        w = x_end - x
+        
+        # Vytvořit feathering masku pro měkké přechody
+        feather_mask = np.ones((h, w), dtype=np.float32)
+        
+        # Měkké hrany - distance map
+        feather_width = min(overlap, h // 4, w // 4)
+        if feather_width > 0:
+            dist_y = np.minimum(np.arange(h), h - np.arange(h))
+            dist_x = np.minimum(np.arange(w), w - np.arange(w))
+            
+            dist_field = np.minimum(
+                np.minimum(dist_y[:, np.newaxis], dist_x[np.newaxis, :]),
+                feather_width
+            )
+            
+            feather_mask = dist_field / (feather_width + 1e-6)
+            feather_mask = np.clip(feather_mask, 0, 1)
+        
+        # Aplikovat masku
+        tile_masked = tile.astype(np.float32) * feather_mask[:,:,np.newaxis]
+        feather_mask_3d = np.stack([feather_mask] * 3, axis=-1)
+        
+        result[y:y_end, x:x_end] += tile_masked
+        weight_sum[y:y_end, x:x_end] += feather_mask_3d[:,:,0]
     
-    return result
+    # Normalizovat
+    weight_sum = np.maximum(weight_sum, 1e-6)
+    for c in range(result.shape[2]):
+        result[:, :, c] /= weight_sum
+    
+    return np.clip(result, 0, 255).astype(np.uint8)
 
 
 def pre_check():
@@ -248,10 +285,9 @@ def process_frames(source_img, frame_paths):
 
 def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_size=512):
     """
-    Optimalizovaný swap s FP16 a tile supportem pro 8K.
-    Windows 11 compatible path handling.
+    Optimalizovaný swap s FP16, pokročilým blendingem a tile supportem pro 8K.
+    OPRAVENO: Eliminuje rámečky kolem obličeje, tvrdé přechody, nerealistické barvy.
     """
-    # Normalizuj cestu pro Windows
     frame_path = os.path.normpath(frame_path)
     
     if not os.path.exists(frame_path):
@@ -264,32 +300,33 @@ def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_s
             print(f"[ERROR] Can't read frame: {frame_path}")
             return None
         
-        # 8K tile processing
-        if use_tiling and tile_size > 0:
-            h, w = frame.shape[:2]
-            # Tile processing pouze pro velké resolution
-            if w > 4000 or h > 4000:
-                print(f"[INFO] Using tile processing {tile_size}px for 8K")
-                tiles, positions = split_into_tiles(frame, tile_size)
-                processed_tiles = []
-                
-                for tile in tiles:
-                    processed_tile = process_tile(tile, source_face, swapper)
-                    processed_tiles.append(processed_tile)
-                
-                frame = merge_tiles(processed_tiles, positions, frame.shape)
-        
-        # Standard processing s FP16
+        # Detekovat tváře
         target_faces = get_faces(frame)
-        swapped_frame = frame
+        swapped_frame = frame.copy()
         
         if target_faces:
             for target_face in target_faces:
+                # Standard face swap
                 if core.globals.use_fp16 and core.globals.device == 'cuda':
                     with torch.autocast('cuda'):
-                        swapped_frame = swapper.get(frame, target_face, source_face, paste_back=True)
+                        swapped_temp = swapper.get(frame, target_face, source_face, paste_back=False)
                 else:
-                    swapped_frame = swapper.get(frame, target_face, source_face, paste_back=True)
+                    swapped_temp = swapper.get(frame, target_face, source_face, paste_back=False)
+                
+                # OPRAVENO: Pokročilý blend místo tvrdého lepení
+                bbox = target_face.bbox
+                x1, y1, x2, y2 = [int(v) for v in bbox]
+                
+                # Color matching pro realističtější výsledek
+                original_region = frame[max(0, y1-20):min(frame.shape[0], y2+20), 
+                                       max(0, x1-20):min(frame.shape[1], x2+20)]
+                swapped_resized = cv2.resize(swapped_temp, (x2-x1, y2-y1))
+                swapped_resized = AdvancedFaceBlender.color_match_faces(
+                    swapped_resized, original_region, blend_strength=0.6)
+                
+                # Pokročilé blending - eliminuje rámečky!
+                swapped_frame = AdvancedFaceBlender.blend_faces_advanced(
+                    swapped_frame, swapped_resized, bbox, expand_ratio=1.35)
             
             # GPU cache cleanup
             if core.globals.device == 'cuda':
@@ -309,6 +346,7 @@ def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_s
 
 
 def extractFace(frame_name, input_img, face, output_dir, side):
+    """Extract obličej s vylepšeným boundingem - OPRAVENO"""
     bbox = face.bbox
 
     # Load equirectangular image
@@ -317,22 +355,31 @@ def extractFace(frame_name, input_img, face, output_dir, side):
     # Convert bounding box to ints
     x1, y1, x2, y2 = map(int, bbox)
 
+    # OPRAVENO: Zvětšit bbox o 25% pro měkký blend
+    h = y2 - y1
+    w = x2 - x1
+    
+    expand_ratio = 0.25
+    y1_expanded = max(0, int(y1 - h * expand_ratio))
+    x1_expanded = max(0, int(x1 - w * expand_ratio))
+    y2_expanded = min(equ.get_height(), int(y2 + h * expand_ratio))
+    x2_expanded = min(equ.get_width(), int(x2 + w * expand_ratio))
+
     # Determine the center of the bounding box
-    x_center = (x1 + x2) / 2
-    y_center = (y1 + y2) / 2
+    x_center = (x1_expanded + x2_expanded) / 2
+    y_center = (y1_expanded + y2_expanded) / 2
 
     # Normalize coordinates to range [-1, 1]
     x_center_normalized = x_center / (equ.get_width() / 2) - 1
     y_center_normalized = y_center / (equ.get_height() / 2) - 1
 
     # Convert normalized coordinates to spherical (theta, phi)
-    theta = x_center_normalized * 180  # Theta ranges from -180 to 180 degrees
-    phi = -y_center_normalized * 90  # Phi ranges from -90 to 90 degrees
+    theta = x_center_normalized * 180
+    phi = -y_center_normalized * 90
 
-    img = equ.GetPerspective(90, theta, phi, 1280, 1280)  # Generate perspective image
+    img = equ.GetPerspective(90, theta, phi, 1280, 1280)
     output_path = os.path.join(output_dir, f'{frame_name}_{side}.jpg')
     cv2.imwrite(output_path, img)
-    #store_exif_info(output_path, theta, phi)
     storeInfo(frame_name, side, output_dir, theta, phi)
 
 
@@ -454,3 +501,18 @@ if __name__ == '__main__':
         import traceback
         traceback.print_exc()
         sys.exit(1)
+
+
+def enhance_output_quality(frame, denoise=True, sharpen=False):
+    """Post-processing pro vyšší kvalitu výstupu"""
+    result = frame.copy().astype(np.float32) / 255.0
+    
+    if denoise:
+        frame_uint8 = (result * 255).astype(np.uint8)
+        result = cv2.bilateralFilter(frame_uint8, 9, 75, 75).astype(np.float32) / 255.0
+    
+    if sharpen:
+        blurred = cv2.GaussianBlur(result, (0, 0), 1.0)
+        result = cv2.addWeighted(result, 1.5, blurred, -0.5, 0)
+    
+    return np.clip(result * 255, 0, 255).astype(np.uint8)
