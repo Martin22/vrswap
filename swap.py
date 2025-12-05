@@ -258,8 +258,11 @@ def process_frames(source_img, frame_paths):
                     # Ujisti se že swapped je numpy array
                     if swapped is None:
                         continue
+                    if isinstance(swapped, (tuple, list)):
+                        # swapper.get() někdy vrací tuple (frame, landmarks)
+                        swapped = swapped[0] if isinstance(swapped[0], np.ndarray) else swapped
                     if not isinstance(swapped, np.ndarray):
-                        swapped = np.array(swapped)
+                        continue
                     
                     # Pokročilý blend - eliminuje artefakty
                     bbox = target_face.bbox
