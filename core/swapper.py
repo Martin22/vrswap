@@ -17,20 +17,12 @@ def get_face_swapper():
     if FACE_SWAPPER is None:
         model_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../inswapper_128.onnx')
         
-        # Windows compatibility - session options
+        # Load model using insightface
         try:
-            import onnxruntime
-            sess_options = onnxruntime.SessionOptions()
-            sess_options.graph_optimization_level = onnxruntime.GraphOptimizationLevel.ORT_ENABLE_ALL
-            
-            FACE_SWAPPER = onnxruntime.InferenceSession(
-                model_path,
-                sess_options=sess_options,
-                providers=core.globals.providers
-            )
-        except Exception as e:
-            print(f"ONNX Runtime error: {e}, falling back to InsightFace")
             FACE_SWAPPER = insightface.model_zoo.get_model(model_path, providers=core.globals.providers)
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            raise e
     
     return FACE_SWAPPER
 
