@@ -19,10 +19,11 @@ import tempfile
 import core.globals
 from core.swapper import get_face_swapper
 from core.analyser import get_face, get_faces
+from core.advanced_blending import AdvancedFaceBlender
 
 
 class VideoProcessor:
-    def __init__(self, video_path, faces_folder, output_path, gpu=True, threads=5, tile_size=512):
+    def __init__(self, video_path, faces_folder, output_path, gpu=True, threads=5, tile_size=512, fast_mode=False):
         """Initialize video processor"""
         self.video_path = os.path.normpath(video_path)
         self.faces_folder = os.path.normpath(faces_folder)
@@ -30,6 +31,7 @@ class VideoProcessor:
         self.gpu = gpu
         self.threads = threads
         self.tile_size = tile_size
+        self.fast_mode = fast_mode
         
         # Temporary working directory
         self.work_dir = None
@@ -196,9 +198,13 @@ class VideoProcessor:
                                     if core.globals.use_fp16 and core.globals.device == 'cuda':
                                         import torch
                                         with torch.autocast('cuda'):
-                                            frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                            swapped = self.swapper.get(frame, target_face, source_face, paste_back=False)
                                     else:
-                                        frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                        swapped = self.swapper.get(frame, target_face, source_face, paste_back=False)
+                                    
+                                    # Advanced blending - eliminuje artefakty
+                                    bbox = target_face.bbox
+                                    frame = AdvancedFaceBlender.blend_faces_advanced(frame, swapped, bbox, expand_ratio=1.35, use_color_match=(not self.fast_mode))
                                 except Exception as e:
                                     print(f"[DEBUG] Swap error: {e}")
                                     continue
@@ -341,6 +347,8 @@ Examples:
                        help="Number of GPU threads (default: 5)")
     parser.add_argument("--tile_size", type=int, default=512,
                        help="Tile size for 8K processing (0=disable, default: 512)")
+    parser.add_argument("--fast", action="store_true", default=False,
+                       help="Fast mode - skip color matching")
     
     parser.add_argument("--execution-provider", choices=['cuda', 'tensorrt', 'cpu'], default='cuda',
                        help="Execution provider (default: cuda)")
@@ -367,7 +375,8 @@ Examples:
             output_path=args.output,
             gpu=args.gpu,
             threads=args.gpu_threads,
-            tile_size=args.tile_size
+            tile_size=args.tile_size,
+            fast_mode=args.fast
         )
         
         success = processor.process()
