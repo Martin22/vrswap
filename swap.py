@@ -51,6 +51,7 @@ sourceFace = args.face
 gpuThreads = args.gpu_threads
 batchSize = args.batch_size
 tileSize = args.tile_size
+fastMode = args.fast_mode
 
 # Create a lock for thread-safe file writing
 lock = threading.Lock()
@@ -256,7 +257,7 @@ def process_frames(source_img, frame_paths):
                     
                     # Pokročilý blend - eliminuje artefakty
                     bbox = target_face.bbox
-                    result = AdvancedFaceBlender.blend_faces_advanced(result, swapped, bbox, expand_ratio=1.35)
+                    result = AdvancedFaceBlender.blend_faces_advanced(result, swapped, bbox, expand_ratio=1.35, use_color_match=(not fastMode))
                 
                 # Ulož
                 cv2.imwrite(frame_path, result)
@@ -453,6 +454,7 @@ if __name__ == '__main__':
         print(f"[INFO] Processing {sourceFace}")
         print(f"[INFO] Device: {core.globals.device}")
         print(f"[INFO] FP16 enabled: {core.globals.use_fp16}")
+        print(f"[INFO] Fast mode: {fastMode}")
         print("[INFO] Swapping in progress...")
         
         process_frames(sourceFace, framePaths)
