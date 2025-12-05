@@ -83,8 +83,18 @@ class AdvancedFaceBlender:
         Returns:
             Blended frame
         """
+        # Ověřit že frame a swapped_face jsou numpy arrays
+        if not isinstance(frame, np.ndarray):
+            return frame
+        if not isinstance(swapped_face, np.ndarray):
+            return frame
+        
         x1, y1, x2, y2 = [int(v) for v in bbox]
         h, w = y2 - y1, x2 - x1
+        
+        # Zkontroluj dimenzi
+        if h <= 0 or w <= 0 or swapped_face.shape[0] <= 0 or swapped_face.shape[1] <= 0:
+            return frame
         
         # Zvětšit bbox pro soft blend region
         expand_h = int(h * expand_ratio)
@@ -107,7 +117,11 @@ class AdvancedFaceBlender:
         blend_mask_3d = np.stack([blend_mask] * 3, axis=-1)
         
         # Resize swapped_face aby seděl
-        swapped_resized = cv2.resize(swapped_face, (x2-x1, y2-y1))
+        try:
+            swapped_resized = cv2.resize(swapped_face, (x2-x1, y2-y1))
+        except Exception as e:
+            print(f"[DEBUG] Resize error: {e}, swapped_face shape: {swapped_face.shape if hasattr(swapped_face, 'shape') else 'unknown'}")
+            return frame
         
         # Vytvořit canvas pro swap
         swap_canvas = frame.copy().astype(np.float32)

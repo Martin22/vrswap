@@ -202,11 +202,19 @@ class VideoProcessor:
                                     else:
                                         swapped = self.swapper.get(frame, target_face, source_face, paste_back=False)
                                     
+                                    # Ujisti se že swapped je numpy array
+                                    if swapped is None:
+                                        continue
+                                    if not isinstance(swapped, np.ndarray):
+                                        swapped = np.array(swapped)
+                                    
                                     # Advanced blending - eliminuje artefakty
                                     bbox = target_face.bbox
                                     frame = AdvancedFaceBlender.blend_faces_advanced(frame, swapped, bbox, expand_ratio=1.35, use_color_match=(not self.fast_mode))
                                 except Exception as e:
                                     print(f"[DEBUG] Swap error: {e}")
+                                    import traceback
+                                    traceback.print_exc()
                                     continue
                         
                         # Save processed frame

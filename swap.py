@@ -255,6 +255,12 @@ def process_frames(source_img, frame_paths):
                     else:
                         swapped = swapper.get(frame, target_face, source_face, paste_back=False)
                     
+                    # Ujisti se že swapped je numpy array
+                    if swapped is None:
+                        continue
+                    if not isinstance(swapped, np.ndarray):
+                        swapped = np.array(swapped)
+                    
                     # Pokročilý blend - eliminuje artefakty
                     bbox = target_face.bbox
                     result = AdvancedFaceBlender.blend_faces_advanced(result, swapped, bbox, expand_ratio=1.35, use_color_match=(not fastMode))
@@ -270,6 +276,8 @@ def process_frames(source_img, frame_paths):
                 
             except Exception as e:
                 print(f"[ERROR] {os.path.basename(frame_path)}: {e}")
+                import traceback
+                traceback.print_exc()
                 progress.update(1)
                 continue
 
