@@ -202,9 +202,6 @@ class VideoProcessor:
                                             frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
                                     else:
                                         frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                    
-                                    # Aplikuj post-processing blur na okraje
-                                    frame = AdvancedFaceBlender.blur_face_edges(frame, target_face.bbox, blur_strength=15)
                                 except Exception as e:
                                     print(f"[DEBUG] Swap error: {e}")
                                     import traceback

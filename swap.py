@@ -12,7 +12,6 @@ import core.globals
 from pathlib import Path
 from core.swapper import get_face_swapper
 from core.analyser import get_face, get_faces, get_face_analyser
-from core.advanced_blending import AdvancedFaceBlender
 from threading import Thread
 import threading
 import cv2
@@ -255,9 +254,6 @@ def process_frames(source_img, frame_paths):
                             result = swapper.get(result, target_face, source_face, paste_back=True)
                     else:
                         result = swapper.get(result, target_face, source_face, paste_back=True)
-                    
-                    # Aplikuj post-processing blur na okraje
-                    result = AdvancedFaceBlender.blur_face_edges(result, target_face.bbox, blur_strength=15)
                 
                 # Ulož
                 cv2.imwrite(frame_path, result)
@@ -300,7 +296,6 @@ def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_s
         
         for target_face in target_faces:
             result = swapper.get(result, target_face, source_face, paste_back=True)
-            result = AdvancedFaceBlender.blur_face_edges(result, target_face.bbox, blur_strength=15)
         
         cv2.imwrite(frame_path, result)
         return result
