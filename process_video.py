@@ -121,48 +121,48 @@ class VideoProcessor:
         
         return fps, frame_count, (width, height)
     
-def _extract_frames(self):
-    """Extract frames from video using NVIDIA GPU acceleration"""
-    print("[STEP 2/4] Extracting frames from video (GPU accelerated)...")
-    
-    self.work_dir = tempfile.mkdtemp(prefix="vrswap_")
-    self.frames_dir = os.path.join(self.work_dir, "frames")
-    os.makedirs(self.frames_dir)
-    
-    output_pattern = os.path.join(self.frames_dir, "%06d.jpg")
-    
-    # FFmpeg command with NVIDIA GPU acceleration for decoding
-    if self.gpu:
-        cmd = [
-            "ffmpeg",
-            "-hwaccel", "cuda",                    # Enable CUDA hardware acceleration
-            "-hwaccel_device", "0",                # Use first GPU
-            "-i", self.video_path,
-            "-qscale:v", "2",                      # High quality JPG
-            "-v", "error",
-            "-stats",
-            output_pattern
-        ]
-    else:
-        # CPU fallback
-        cmd = [
-            "ffmpeg",
-            "-i", self.video_path,
-            "-qscale:v", "2",
-            "-v", "error",
-            "-stats",
-            output_pattern
-        ]
-    
-    try:
-        subprocess.run(cmd, check=True, capture_output=False)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"FFmpeg failed: {e}")
-    
-    frame_files = sorted(glob.glob(os.path.join(self.frames_dir, "*.jpg")))
-    print(f"  ✓ Extracted {len(frame_files)} frames")
-    
-    return frame_files
+    def _extract_frames(self):
+        """Extract frames from video using NVIDIA GPU acceleration"""
+        print("[STEP 2/4] Extracting frames from video (GPU accelerated)...")
+        
+        self.work_dir = tempfile.mkdtemp(prefix="vrswap_")
+        self.frames_dir = os.path.join(self.work_dir, "frames")
+        os.makedirs(self.frames_dir)
+        
+        output_pattern = os.path.join(self.frames_dir, "%06d.jpg")
+        
+        # FFmpeg command with NVIDIA GPU acceleration for decoding
+        if self.gpu:
+            cmd = [
+                "ffmpeg",
+                "-hwaccel", "cuda",                    # Enable CUDA hardware acceleration
+                "-hwaccel_device", "0",                # Use first GPU
+                "-i", self.video_path,
+                "-qscale:v", "2",                      # High quality JPG
+                "-v", "error",
+                "-stats",
+                output_pattern
+            ]
+        else:
+            # CPU fallback
+            cmd = [
+                "ffmpeg",
+                "-i", self.video_path,
+                "-qscale:v", "2",
+                "-v", "error",
+                "-stats",
+                output_pattern
+            ]
+        
+        try:
+            subprocess.run(cmd, check=True, capture_output=False)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"FFmpeg failed: {e}")
+        
+        frame_files = sorted(glob.glob(os.path.join(self.frames_dir, "*.jpg")))
+        print(f"  ✓ Extracted {len(frame_files)} frames")
+        
+        return frame_files
     
     def _process_frames(self, frame_files):
         """Process frames with face swapping"""
@@ -327,9 +327,6 @@ Examples:
 
   # CPU only
   python process_video.py --video video.mp4 --faces faces/ --output output.mp4 --cpu
-
-  # HEVC (H.265) encoding
-  python process_video.py --video video.mp4 --faces faces/ --output output.mp4 --codec hevc
         """
     )
     
