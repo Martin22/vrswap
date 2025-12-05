@@ -6,8 +6,8 @@ use_gpu = False
 providers = onnxruntime.get_available_providers()
 
 # Remove suboptimal providers for Windows stability
-if 'TensorrtExecutionProvider' in providers:
-    providers.remove('TensorrtExecutionProvider')
+# if 'TensorrtExecutionProvider' in providers:
+#     providers.remove('TensorrtExecutionProvider')
 
 # Přidat CPU executor na konec pro fallback (důležité pro Windows)
 if 'CPUExecutionProvider' not in providers:

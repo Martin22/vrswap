@@ -342,14 +342,22 @@ Examples:
     parser.add_argument("--tile_size", type=int, default=512,
                        help="Tile size for 8K processing (0=disable, default: 512)")
     
+    parser.add_argument("--execution-provider", choices=['cuda', 'tensorrt', 'cpu'], default='cuda',
+                       help="Execution provider (default: cuda)")
+    
     args = parser.parse_args()
     
     # Initialize GPU settings
-    if not args.gpu:
+    if not args.gpu or args.execution_provider == 'cpu':
+        args.gpu = False
         core.globals.providers = ['CPUExecutionProvider']
         print("[INFO] Using CPU mode")
+    elif args.execution_provider == 'tensorrt':
+        core.globals.providers = ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+        print("[INFO] Using GPU mode (TensorRT)")
     else:
-        print("[INFO] Using GPU mode (NVIDIA NVENC/CUDA)")
+        core.globals.providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        print("[INFO] Using GPU mode (CUDA)")
     
     # Create processor and run
     try:

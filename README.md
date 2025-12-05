@@ -79,6 +79,20 @@ python -c "import torch; print(f'PyTorch {torch.__version__}'); print(f'CUDA: {t
 ffmpeg -version
 ```
 
+### TensorRT Setup (Optional - For Maximum Performance)
+
+TensorRT can provide 20-50% faster inference than standard CUDA.
+
+```bash
+# Install TensorRT libraries via Conda
+conda install -c conda-forge tensorrt -y
+
+# Verify installation
+python -c "import tensorrt; print(tensorrt.__version__)"
+```
+
+To use it, add `--execution-provider tensorrt` to your commands.
+
 ### Troubleshooting Installation
 
 **⚠️ CRITICAL: `CUDA available: False` (Most Common)**
@@ -221,9 +235,10 @@ Options:
   --many-faces           Enable multiple face detection
   --tile-size INT        8K tile processing (default: 512)
   --batch-size INT       GPU batch size (default: 4)
+  --execution-provider   Provider: cuda, tensorrt, cpu (default: cuda)
 
 Example:
-  python process_video.py video.mp4 face.jpg --output result.mp4 --scale 2 --enhance
+  python process_video.py video.mp4 face.jpg --output result.mp4 --execution-provider tensorrt
 ```
 
 ### upscale.py - Video Upscaling
@@ -293,7 +308,8 @@ Memory usage:
 2. **For Quality**: Use buffalo_l model (slower but better accuracy)
 3. **For Memory**: Reduce BATCH_SIZE or TILE_SIZE
 4. **For 8K**: Use tile processing (automatic in swap.py)
-5. **Skip Unnecessary Steps**: Use `--skip-audio` if you don't need audio
+5. **Use TensorRT**: Install TensorRT and use `--execution-provider tensorrt` for extra speed
+6. **Skip Unnecessary Steps**: Use `--skip-audio` if you don't need audio
 
 ## Troubleshooting
 
