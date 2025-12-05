@@ -43,6 +43,7 @@ parser.add_argument('--gpu', help='use GPU acceleration', dest='gpu', action='st
 parser.add_argument('--cpu', help='force CPU mode', dest='gpu', action='store_false')
 parser.add_argument('--batch_size', help='batch size for processing', default=4, type=int)
 parser.add_argument('--tile_size', help='tile size for 8K (0=disable)', default=512, type=int)
+parser.add_argument('--fast', help='Fast mode - skip color matching', dest='fast_mode', action='store_true', default=False)
 args = parser.parse_args()
 
 framesFolder = args.frames_folder
@@ -214,72 +215,62 @@ def face_analyser_thread(frame_path, source_face, vr = True):
 
 def process_frames(source_img, frame_paths):
     """
-    Procesuje framy s batch optimalizací a Windows compatibility.
-    Podporuje FP16 mixed precision a tile processing pro 8K.
+    Procesuje framy s maximální rychlostí - optimalizovaná verze.
+    Bez zbytečných threadů, přímé GPU zpracování.
     """
-    frames_path = os.path.dirname(frame_paths[0])
-    processing_path = os.path.join(frames_path, "processing")
-    start_frame = os.path.splitext(os.path.basename(frame_paths[0]))[0]
-
-    global swap
-    swap = get_face_swapper()
-    source_face = get_face(cv2.imread(source_img))
+    swapper = get_face_swapper()
+    source_frame = cv2.imread(source_img)
+    source_face = get_face(source_frame)
     
     if source_face is None:
         print("[ERROR] Couldn't detect source face")
         return
 
-    # Create folder
-    processing_path = os.path.normpath(processing_path)
-    if not os.path.exists(processing_path):
-        os.makedirs(processing_path)
-
-    temp = []
-    frame_counter = 0
+    print("[INFO] Processing frames with GPU acceleration...")
     
     with tqdm(total=len(frame_paths), desc='Processing', unit="frame", 
               dynamic_ncols=True, 
               bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}{postfix}]') as progress:
         for frame_path in frame_paths:
-            frame_name = os.path.splitext(os.path.basename(frame_path))[0]
-            output_folder = os.path.dirname(frame_path)
-            processing_folder = os.path.join(output_folder, "processing")
-
-            left_jpg = os.path.join(processing_folder, f"{frame_name}_L.jpg")
-            right_jpg = os.path.join(processing_folder, f"{frame_name}_R.jpg")
-            left_png = os.path.join(processing_folder, f"{frame_name}_L.png")
-            right_png = os.path.join(processing_folder, f"{frame_name}_R.png")
-
-            left_exists = os.path.exists(left_jpg) or os.path.exists(left_png)
-            right_exists = os.path.exists(right_jpg) or os.path.exists(right_png)
-
-            if left_exists and right_exists:
-                print("[DEBUG] Both left and right files exist.")
-                progress.set_postfix(status='S', refresh=True)
-                progress.update(1)
-            else:
-                # Čekej na dokončení threadů
-                while len(temp) >= int(gpuThreads):
-                    has_face, x = temp.pop(0).join()
-
-                    if has_face:
-                        progress.set_postfix(status='.', refresh=True)
-                    else:
-                        progress.set_postfix(status='S', refresh=True)
+            try:
+                # Čti frame
+                frame = cv2.imread(frame_path)
+                if frame is None:
                     progress.update(1)
+                    continue
                 
-                # Přidej nový frame do queue
-                temp.append(ThreadWithReturnValue(target=face_analyser_thread, args=(frame_path, source_face)))
-                temp[-1].start()
-    
-    # Zpracuj zbylé thready
-    while len(temp) > 0:
-        has_face, x = temp.pop(0).join()
-        if has_face:
-            progress.set_postfix(status='.', refresh=True)
-        else:
-            progress.set_postfix(status='S', refresh=True)
-        progress.update(1)
+                # Detekuj tváře
+                target_faces = get_faces(frame)
+                if not target_faces:
+                    progress.update(1)
+                    continue
+                
+                # Swap s FP16 supportem
+                result = frame.copy()
+                for target_face in target_faces:
+                    if core.globals.use_fp16 and core.globals.device == 'cuda':
+                        with torch.autocast('cuda'):
+                            swapped = swapper.get(frame, target_face, source_face, paste_back=False)
+                    else:
+                        swapped = swapper.get(frame, target_face, source_face, paste_back=False)
+                    
+                    # Pokročilý blend - eliminuje artefakty
+                    bbox = target_face.bbox
+                    result = AdvancedFaceBlender.blend_faces_advanced(result, swapped, bbox, expand_ratio=1.35)
+                
+                # Ulož
+                cv2.imwrite(frame_path, result)
+                
+                # GPU cleanup
+                if core.globals.device == 'cuda':
+                    torch.cuda.empty_cache()
+                
+                progress.update(1)
+                
+            except Exception as e:
+                print(f"[ERROR] {os.path.basename(frame_path)}: {e}")
+                progress.update(1)
+                continue
 
 
 
@@ -291,53 +282,30 @@ def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_s
     frame_path = os.path.normpath(frame_path)
     
     if not os.path.exists(frame_path):
-        print(f"[ERROR] Face doesn't exist: {frame_path}")
         return None
     
     try:
         frame = cv2.imread(frame_path)
         if frame is None:
-            print(f"[ERROR] Can't read frame: {frame_path}")
             return None
         
-        # Detekovat tváře
         target_faces = get_faces(frame)
-        swapped_frame = frame.copy()
-        
-        if target_faces:
-            for target_face in target_faces:
-                # Standard face swap
-                if core.globals.use_fp16 and core.globals.device == 'cuda':
-                    with torch.autocast('cuda'):
-                        swapped_temp = swapper.get(frame, target_face, source_face, paste_back=False)
-                else:
-                    swapped_temp = swapper.get(frame, target_face, source_face, paste_back=False)
-                
-                # OPRAVENO: Pokročilý blend místo tvrdého lepení
-                bbox = target_face.bbox
-                x1, y1, x2, y2 = [int(v) for v in bbox]
-                
-                # Color matching pro realističtější výsledek
-                original_region = frame[max(0, y1-20):min(frame.shape[0], y2+20), 
-                                       max(0, x1-20):min(frame.shape[1], x2+20)]
-                swapped_resized = cv2.resize(swapped_temp, (x2-x1, y2-y1))
-                swapped_resized = AdvancedFaceBlender.color_match_faces(
-                    swapped_resized, original_region, blend_strength=0.6)
-                
-                # Pokročilé blending - eliminuje rámečky!
-                swapped_frame = AdvancedFaceBlender.blend_faces_advanced(
-                    swapped_frame, swapped_resized, bbox, expand_ratio=1.35)
-            
-            # GPU cache cleanup
-            if core.globals.device == 'cuda':
-                torch.cuda.empty_cache()
-            
-            # Ulož s Windows compatibility
-            cv2.imwrite(frame_path, swapped_frame)
-            return swapped_frame
-        else:
-            print(f"[DEBUG] No faces found in {os.path.basename(frame_path)}")
+        if not target_faces:
             return frame
+        
+        result = frame.copy()
+        
+        for target_face in target_faces:
+            swapped_temp = swapper.get(frame, target_face, source_face, paste_back=False)
+            bbox = target_face.bbox
+            result = AdvancedFaceBlender.blend_faces_advanced(result, swapped_temp, bbox, expand_ratio=1.35)
+        
+        cv2.imwrite(frame_path, result)
+        return result
+        
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return None
             
     except Exception as e:
         print(f"[ERROR] Face swap error: {e}")

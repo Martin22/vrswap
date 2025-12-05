@@ -70,14 +70,15 @@ class AdvancedFaceBlender:
         return mask.astype(np.float32) / 255.0
     
     @staticmethod
-    def blend_faces_advanced(frame, swapped_face, bbox, expand_ratio=1.35):
-        """Pokročilý blend swappované tváře s rámem
+    def blend_faces_advanced(frame, swapped_face, bbox, expand_ratio=1.35, use_color_match=False):
+        """Pokročilý blend swappované tváře s rámem - optimalizovaný pro rychlost
         
         Args:
             frame: Původní frame
             swapped_face: Swappovaná tvář
             bbox: Bounding box (x1, y1, x2, y2)
             expand_ratio: Kolik pixelů rozšířit bbox pro měkký blend
+            use_color_match: Použít color matching (pomalejší, ale lepší kvalita)
         
         Returns:
             Blended frame
