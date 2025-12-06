@@ -361,6 +361,18 @@ class VideoProcessor:
                                         frame = perspective_frame
                                         continue
                                 
+                                # Check if bbox is valid (not clipped out of frame bounds)
+                                bbox = target_face.bbox
+                                h, w = frame.shape[:2]
+                                x1, y1, x2, y2 = bbox
+                                if x1 >= w or y1 >= h or x2 <= 0 or y2 <= 0:
+                                    # Face completely outside frame
+                                    continue
+                                if y1 < 0 or y2 < 0 or x1 < 0 or x2 < 0:
+                                    # Face partially outside frame - skip to avoid index errors
+                                    print(f"[DEBUG] Skipping partial face (bbox={bbox}, frame_shape={frame.shape[:2]})")
+                                    continue
+                                
                                 # RTX 4060 Ti: Direct swap s FP16
                                 try:
                                     if core.globals.use_fp16 and core.globals.device == 'cuda':
