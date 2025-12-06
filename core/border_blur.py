@@ -58,7 +58,7 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=12, device='cuda'):
                                        stride=1, padding=erosion_kernel_size//2)
         mask_eroded = 1.0 - mask_inv_eroded
         
-        # Gaussian blur (malý kernel, aby plynulý přechod byl jen v úzkém pásu)
+        # Gaussian blur (malý kernel, úzký pás)
         kernel_size = feather_radius * 2 + 1
         sigma = max(0.8, feather_radius * 0.6)
         
@@ -73,16 +73,20 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=12, device='cuda'):
         mask_soft = F.conv2d(mask_eroded, gaussian_kernel, padding=kernel_size//2)
         mask_soft = torch.clamp(mask_soft, 0, 1)
         mask_soft = mask_soft / (mask_soft.amax() + 1e-6)
-        # Zesílit střed, aby uvnitř zůstal ostrý
-        mask_soft = mask_soft.pow(1.5)
+        # Vytvoř úzký přechodový pás (edge band)
+        band_kernel = max(3, min(7, feather_radius // 2 * 2 + 1))
+        band_sigma = max(0.6, band_kernel * 0.3)
+        # Erode mask to get inner region
+        inner = 1.0 - F.max_pool2d(1.0 - mask_soft, kernel_size=band_kernel, stride=1, padding=band_kernel//2)
+        edge = torch.clamp(mask_soft - inner, 0, 1)
 
-        # Blur the frame for edge feathering
+        # Blur only the edge band
         gaussian_kernel_3ch = gaussian_kernel.expand(3, 1, -1, -1)
         frame_blurred = F.conv2d(frame_tensor, gaussian_kernel_3ch, padding=kernel_size//2, groups=3)
-        
-        # Blend blurred + sharp frame using soft mask (eliminates rectangle edges)
-        mask_3ch = mask_soft.expand(1, 3, -1, -1)
-        result = frame_tensor * mask_3ch + frame_blurred * (1 - mask_3ch)
+
+        # Blend: center stays sharp, only edge band is blurred
+        edge_3ch = edge.expand(1, 3, -1, -1)
+        result = frame_tensor + edge_3ch * (frame_blurred - frame_tensor)
         
         # Convert back
         result = result.squeeze(0).permute(1, 2, 0).cpu().numpy()
@@ -158,14 +162,18 @@ def apply_border_blur(frame, bbox, blur_strength=12):
         mask_soft = np.clip(mask_soft, 0, 1)
         if mask_soft.max() > 1e-6:
             mask_soft = mask_soft / mask_soft.max()
-        mask_soft = np.power(mask_soft, 1.5)
-        
-        # Připrav rozmazaný snímek pro měkké hrany (jen ROI)
+
+        # Vytvoř úzký přechodový pás: edge = mask_soft - eroded(mask_soft)
+        band_kernel = max(3, min(7, feather_radius // 2 * 2 + 1))
+        band = cv2.erode(mask_soft, np.ones((band_kernel, band_kernel), np.uint8), iterations=1)
+        edge = np.clip(mask_soft - band, 0, 1)
+
+        # Blur jen okrajový pás
         frame_blurred = cv2.GaussianBlur(frame_roi, (kernel_size, kernel_size), sigma)
-        
-        # Blend: ostrý swap uvnitř, rozmazané okraje venku
-        mask_3ch = np.stack([mask_soft] * 3, axis=-1)
-        result = frame_roi.astype(np.float32) * mask_3ch + frame_blurred.astype(np.float32) * (1 - mask_3ch)
+
+        # Blend: střed ostrý, edge pás rozmazaný
+        edge_3ch = np.repeat(edge[:, :, None], 3, axis=2)
+        result = frame_roi.astype(np.float32) + edge_3ch * (frame_blurred.astype(np.float32) - frame_roi.astype(np.float32))
         result = np.clip(result, 0, 255).astype(np.uint8)
 
         output = frame.copy()
