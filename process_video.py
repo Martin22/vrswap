@@ -43,7 +43,7 @@ class VideoProcessor:
         
         # RTX 4060 Ti: Batch processing settings
         self.batch_size = 4 if gpu else 1
-        self.memory_cleanup_interval = 10  # Cleanup každých 10 frames
+        self.memory_cleanup_interval = 50  # Cleanup méně často pro menší overhead
         
         # Temporary working directory
         self.work_dir = None
@@ -230,6 +230,8 @@ class VideoProcessor:
         use_gpu_blur = self.gpu and core.globals.device == 'cuda'
         # Cache for perspective remap grids to reduce overhead in VR-like pole handling
         persp_cache = {}
+        # JPEG save params: slightly lower quality to shrink IO cost
+        imwrite_params = [int(cv2.IMWRITE_JPEG_QUALITY), 90]
 
         def _inverse_perspective_maps(theta, phi, fov, size, w, h):
             """Return maps from equirect coords -> perspective patch (size x size) plus validity mask."""
@@ -388,9 +390,9 @@ class VideoProcessor:
             x1, y1, x2, y2 = bbox
             bh = y2 - y1
             bw = x2 - x1
-            # Velmi velký obličej nebo příliš nahoře/dole → hůře mapovatelné na equirect
-            large = (bh * bw) / (h * w) > 0.18
-            near_pole = y1 < 0.12 * h or y2 > 0.88 * h
+            # Přísnější podmínka: jen opravdu velké/pólové tváře
+            large = (bh * bw) / (h * w) > 0.22
+            near_pole = y1 < 0.10 * h or y2 > 0.90 * h
             return large or near_pole
 
         def swap_in_perspective(frame, target_face, source_face):
@@ -405,9 +407,9 @@ class VideoProcessor:
                 x1, y1, x2, y2 = target_face.bbox
                 cx = (x1 + x2) * 0.5
                 cy = (y1 + y2) * 0.5
-                # FOV podle velikosti boxu; clamp na rozumné hodnoty
-                fov = float(np.clip((x2 - x1) / w * 200.0, 80.0, 150.0))
-                size = 640
+                # FOV podle velikosti boxu; clamp na rozumné hodnoty (užší pro menší výpočet)
+                fov = float(np.clip((x2 - x1) / w * 200.0, 80.0, 120.0))
+                size = 384
                 equ_cx = (w - 1) / 2.0
                 equ_cy = (h - 1) / 2.0
 
@@ -415,7 +417,8 @@ class VideoProcessor:
                 phi = -(cy - equ_cy) / equ_cy * 90.0    # up/down
 
                 lon_map, lat_map, inv_map_x, inv_map_y, inv_valid = cached_perspective_grid(theta, phi, fov, size, w, h)
-                persp = cv2.remap(frame, lon_map, lat_map, cv2.INTER_CUBIC, borderMode=cv2.BORDER_WRAP)
+                # Linear interpolation keeps speed high with minimal quality loss
+                persp = cv2.remap(frame, lon_map, lat_map, cv2.INTER_LINEAR, borderMode=cv2.BORDER_WRAP)
 
                 # Re-detect face in perspective space to avoid bbox mismatch
                 persp_faces = get_faces(persp)
@@ -597,14 +600,19 @@ class VideoProcessor:
                                     swap_patch = frame[y1c:y2c, x1c:x2c]
                                     orig_patch = orig_frame[y1c:y2c, x1c:x2c]
                                     try:
-                                        colored = adaptive_color_blend(orig_patch, swap_patch, mask=None, method="auto")
-                                        # Add a small amount of original detail to keep expressions
-                                        detail = orig_patch.astype(np.float32) - cv2.GaussianBlur(orig_patch, (0, 0), 1.2)
-                                        restored = np.clip(colored.astype(np.float32) + 0.18 * detail, 0, 255).astype(np.uint8)
-                                        band = max(6, min(24, min(swap_patch.shape[0], swap_patch.shape[1]) // 5))
+                                        # Skip heavy blend if barvy jsou už podobné
+                                        diff = np.mean(np.abs(swap_patch.astype(np.float32) - orig_patch.astype(np.float32)))
+                                        if diff < 6.0:
+                                            colored = swap_patch
+                                        else:
+                                            colored = adaptive_color_blend(orig_patch, swap_patch, mask=None, method="auto")
+                                            detail = orig_patch.astype(np.float32) - cv2.GaussianBlur(orig_patch, (0, 0), 1.2)
+                                            colored = np.clip(colored.astype(np.float32) + 0.18 * detail, 0, 255).astype(np.uint8)
+
+                                        band = max(6, min(20, min(swap_patch.shape[0], swap_patch.shape[1]) // 6))
                                         mask = soft_bbox_mask(swap_patch.shape[0], swap_patch.shape[1], band)
                                         mask3 = mask[:, :, None]
-                                        blended = swap_patch.astype(np.float32) * (1 - mask3) + restored.astype(np.float32) * mask3
+                                        blended = swap_patch.astype(np.float32) * (1 - mask3) + colored.astype(np.float32) * mask3
                                         frame[y1c:y2c, x1c:x2c] = np.clip(blended, 0, 255).astype(np.uint8)
                                     except Exception as blend_err:
                                         print(f"[DEBUG] Color/detail blend failed: {blend_err}")
@@ -613,16 +621,17 @@ class VideoProcessor:
                                 bbox = target_face.bbox
                                 if not self.fast_mode:
                                     if use_gpu_blur:
-                                        frame = apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda')
+                                        frame = apply_border_blur_gpu(frame, bbox, blur_strength=11, device='cuda')
                                     else:
-                                        frame = apply_border_blur(frame, bbox, blur_strength=15)
+                                        frame = apply_border_blur(frame, bbox, blur_strength=11)
 
                                 # Stabilize extreme close-ups near poles with seamless cloning
                                 if (not self.fast_mode) and needs_pole_stabilization(bbox, frame.shape):
                                     x1, y1, x2, y2 = map(int, bbox)
                                     x1 = max(0, x1); y1 = max(0, y1)
                                     x2 = min(frame.shape[1], x2); y2 = min(frame.shape[0], y2)
-                                    if x2 > x1 and y2 > y1:
+                                    area_ratio = ((x2 - x1) * (y2 - y1)) / float(frame.shape[0] * frame.shape[1] + 1e-6)
+                                    if x2 > x1 and y2 > y1 and area_ratio >= 0.05:
                                         patch = frame[y1:y2, x1:x2]
                                         mask = np.ones(patch.shape[:2], dtype=np.uint8) * 255
                                         center = ((x1 + x2) // 2, (y1 + y2) // 2)
@@ -638,15 +647,14 @@ class VideoProcessor:
                                 continue
                         
                         # Save processed frame
-                        cv2.imwrite(frame_file, frame)
+                        cv2.imwrite(frame_file, frame, imwrite_params)
                         processed_count += 1
                         
-                        # RTX 4060 Ti: Aggressive memory cleanup
+                        # RTX 4060 Ti: Periodic memory cleanup (less frequent, no full sync)
                         frame_counter += 1
                         if frame_counter % self.memory_cleanup_interval == 0 and core.globals.device == 'cuda':
                             import torch
                             torch.cuda.empty_cache()
-                            torch.cuda.synchronize()
                     
                     pbar.update(1)
                     
