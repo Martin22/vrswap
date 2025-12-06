@@ -39,45 +39,48 @@ def get_face_swapper():
 
                         def _run_with_iobinding(*args, **kwargs):
                             # ORT run signature: run(output_names=None, input_feed=None, ...)
-                            input_feed = None
-                            if len(args) >= 2 and isinstance(args[1], dict):
-                                input_feed = args[1]
-                            if input_feed is None:
-                                input_feed = kwargs.get('input_feed') or (args[0] if args and isinstance(args[0], dict) else None)
-                            if input_feed is None:
-                                # Fallback to original run
-                                return sess._orig_run(*args, **kwargs)
-
-                            # Prepare IO binding
-                            ib = sess.io_binding()
-                            bound_inputs = []
-                            for name in input_names:
-                                if name not in input_feed:
+                            try:
+                                input_feed = None
+                                if len(args) >= 2 and isinstance(args[1], dict):
+                                    input_feed = args[1]
+                                if input_feed is None:
+                                    input_feed = kwargs.get('input_feed') or (args[0] if args and isinstance(args[0], dict) else None)
+                                if input_feed is None:
+                                    # Fallback to original run
                                     return sess._orig_run(*args, **kwargs)
-                                arr = np.ascontiguousarray(input_feed[name])
-                                bound_inputs.append(arr)
-                                ib.bind_input(
-                                    name=name,
+
+                                # Prepare IO binding
+                                ib = sess.io_binding()
+                                for name in input_names:
+                                    if name not in input_feed:
+                                        return sess._orig_run(*args, **kwargs)
+                                    arr = np.ascontiguousarray(input_feed[name])
+                                    ib.bind_input(
+                                        name=name,
+                                        device_type=device_type,
+                                        device_id=0,
+                                        element_type=np.float32,
+                                        shape=arr.shape,
+                                        buffer_ptr=arr.ctypes.data
+                                    )
+
+                                # Output buffer shape is fixed for inswapper_128
+                                out_arr = np.empty((1, 3, 128, 128), dtype=np.float32)
+                                ib.bind_output(
+                                    name=output_name,
                                     device_type=device_type,
                                     device_id=0,
                                     element_type=np.float32,
-                                    shape=arr.shape,
-                                    buffer_ptr=arr.ctypes.data
+                                    shape=out_arr.shape,
+                                    buffer_ptr=out_arr.ctypes.data
                                 )
 
-                            # Output buffer shape is fixed for inswapper_128
-                            out_arr = np.empty((1, 3, 128, 128), dtype=np.float32)
-                            ib.bind_output(
-                                name=output_name,
-                                device_type=device_type,
-                                device_id=0,
-                                element_type=np.float32,
-                                shape=out_arr.shape,
-                                buffer_ptr=out_arr.ctypes.data
-                            )
-
-                            sess.run_with_iobinding(ib)
-                            return [out_arr]
+                                sess.run_with_iobinding(ib)
+                                return [out_arr]
+                            except Exception:
+                                # On any failure, revert to original run and fall back
+                                sess.run = sess._orig_run
+                                return sess._orig_run(*args, **kwargs)
 
                         # Monkey-patch run while keeping original as backup
                         if not hasattr(sess, '_orig_run'):
