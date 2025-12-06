@@ -100,29 +100,24 @@ def get_face_swapper():
 
 
 def get_swapped_face(frame, target_face, source_face):
-    """
-    Perform face swap s optimalizacemi.
-    
-        try:
-            FACE_SWAPPER = insightface.model_zoo.get_model(
-                model_path,
-                providers=core.globals.providers,
-                provider_options=core.globals.provider_options
-            )
+    """Perform a single face swap using the global swapper."""
+    swapper = get_face_swapper()
+
+    try:
+        if core.globals.use_fp16 and core.globals.device == 'cuda':
             with torch.autocast('cuda'):
                 result = swapper.get(frame, target_face, source_face, paste_back=True)
         else:
             result = swapper.get(frame, target_face, source_face, paste_back=True)
-        
-        # Clear cache
+
         if core.globals.device == 'cuda':
             try:
-                # Try to enable ONNX Runtime IO binding for faster GPU path (skip when TensorRT is active)
-                try:
-                    # If TensorRT EP is present, avoid monkey-patching
-                    if 'TensorrtExecutionProvider' not in (core.globals.providers or []):
-                        sess = getattr(FACE_SWAPPER, 'model', None)
-                        if sess is not None and hasattr(sess, 'io_binding') and hasattr(sess, 'run_with_iobinding'):
-                            inputs = sess.get_inputs()
-                            outputs = sess.get_outputs()
-                            torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
+            except Exception:
+                pass
+
+        return result
+    except Exception as e:
+        print(f"Face swap error: {e}")
+        traceback.print_exc()
+        return frame
