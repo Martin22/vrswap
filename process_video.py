@@ -226,6 +226,16 @@ class VideoProcessor:
         # RTX 4060 Ti: Use CUDA stream
         use_gpu_blur = self.gpu and core.globals.device == 'cuda'
 
+        def needs_pole_stabilization(bbox, frame_shape):
+            h, w = frame_shape[:2]
+            x1, y1, x2, y2 = bbox
+            bh = y2 - y1
+            bw = x2 - x1
+            # Velmi velký obličej nebo příliš nahoře/dole → hůře mapovatelné na equirect
+            large = (bh * bw) / (h * w) > 0.18
+            near_pole = y1 < 0.12 * h or y2 > 0.88 * h
+            return large or near_pole
+
         def select_best_source(target_face):
             """Najdi nejlepší zdrojovou tvář podle embedding similarity (urychlí proces)."""
             if not self.source_faces:
@@ -252,6 +262,9 @@ class VideoProcessor:
                         print(f"[WARNING] Could not read frame: {frame_file}")
                         pbar.update(1)
                         continue
+
+                    # Keep a copy before blending for smoother pole fixes
+                    orig_frame = frame.copy()
                     
                     # Get all target faces in this frame
                     target_faces = get_faces(frame)
@@ -278,6 +291,20 @@ class VideoProcessor:
                                     frame = apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda')
                                 else:
                                     frame = apply_border_blur(frame, bbox, blur_strength=15)
+
+                                # Stabilize extreme close-ups near poles with seamless cloning
+                                if needs_pole_stabilization(bbox, frame.shape):
+                                    x1, y1, x2, y2 = map(int, bbox)
+                                    x1 = max(0, x1); y1 = max(0, y1)
+                                    x2 = min(frame.shape[1], x2); y2 = min(frame.shape[0], y2)
+                                    if x2 > x1 and y2 > y1:
+                                        patch = frame[y1:y2, x1:x2]
+                                        mask = np.ones(patch.shape[:2], dtype=np.uint8) * 255
+                                        center = ((x1 + x2) // 2, (y1 + y2) // 2)
+                                        try:
+                                            frame = cv2.seamlessClone(patch, frame, mask, center, cv2.MIXED_CLONE)
+                                        except cv2.error:
+                                            pass
                                 
                             except Exception as e:
                                 print(f"[DEBUG] Swap error: {e}")
