@@ -19,16 +19,16 @@ def get_face_analyser():
                     device_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
                     if device_memory >= 12:
                         model_name = 'buffalo_l'  # RTX 4060 Ti má 16GB → best quality
-                        det_size = (512, 512)  # menší det_size pro vyšší FPS
+                        det_size = (640, 640)  # stabilní pro buffalo_l
                     elif device_memory >= 8:
                         model_name = 'buffalo_m'
-                        det_size = (448, 448)
+                        det_size = (512, 512)
                     else:
                         model_name = 'buffalo_s'
-                        det_size = (448, 448)
+                        det_size = (512, 512)
                 except:
                     model_name = 'buffalo_l'
-                    det_size = (512, 512)
+                    det_size = (640, 640)
             else:
                 model_name = 'buffalo_s'
                 det_size = (512, 512)
