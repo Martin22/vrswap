@@ -98,10 +98,16 @@ class VideoProcessor:
                     print(f"[WARNING] No face detected in: {os.path.basename(face_file)}")
                     continue
                 
+                # Ulož embedding pro pozdější výběr nejbližší tváře (rychlejší než zkoušet všechny)
+                embedding = None
+                if hasattr(detected_face, "normed_embedding") and detected_face.normed_embedding is not None:
+                    embedding = np.asarray(detected_face.normed_embedding, dtype=np.float32)
+                
                 self.source_faces.append({
                     'name': os.path.basename(face_file),
                     'data': detected_face,
-                    'image': face_img
+                    'image': face_img,
+                    'embedding': embedding
                 })
                 print(f"  ✓ Loaded: {os.path.basename(face_file)}")
             except Exception as e:
@@ -191,6 +197,24 @@ class VideoProcessor:
         
         # RTX 4060 Ti: Use CUDA stream
         use_gpu_blur = self.gpu and core.globals.device == 'cuda'
+
+        def select_best_source(target_face):
+            """Najdi nejlepší zdrojovou tvář podle embedding similarity (urychlí proces)."""
+            if not self.source_faces:
+                return None
+            if not hasattr(target_face, "normed_embedding") or target_face.normed_embedding is None:
+                return self.source_faces[0]
+            target_emb = np.asarray(target_face.normed_embedding, dtype=np.float32)
+            best = self.source_faces[0]
+            best_score = -1.0
+            for source in self.source_faces:
+                if source.get('embedding') is None:
+                    continue
+                score = float(np.dot(target_emb, source['embedding']))
+                if score > best_score:
+                    best_score = score
+                    best = source
+            return best
         
         with tqdm(total=len(frame_files), desc="Swapping faces", unit="frame") as pbar:
             for frame_file in frame_files:
@@ -205,30 +229,31 @@ class VideoProcessor:
                     target_faces = get_faces(frame)
                     
                     if target_faces:
-                        # Apply swaps with all source faces
-                        for source_face_data in self.source_faces:
-                            source_face = source_face_data['data']
-                            
-                            for target_face in target_faces:
-                                try:
-                                    # RTX 4060 Ti: Direct swap s FP16
-                                    if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                        import torch
-                                        with torch.autocast('cuda', dtype=torch.float16):
-                                            frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                    else:
-                                        frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                    
-                                    # RTX 4060 Ti: GPU-accelerated border blur
-                                    bbox = target_face.bbox
-                                    if use_gpu_blur:
-                                        frame = apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda')
-                                    else:
-                                        frame = apply_border_blur(frame, bbox, blur_strength=15)
-                                    
-                                except Exception as e:
-                                    print(f"[DEBUG] Swap error: {e}")
+                        for target_face in target_faces:
+                            try:
+                                best_source = select_best_source(target_face)
+                                if best_source is None:
                                     continue
+                                source_face = best_source['data']
+                                
+                                # RTX 4060 Ti: Direct swap s FP16
+                                if core.globals.use_fp16 and core.globals.device == 'cuda':
+                                    import torch
+                                    with torch.autocast('cuda', dtype=torch.float16):
+                                        frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                else:
+                                    frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                
+                                # RTX 4060 Ti: GPU-accelerated border blur
+                                bbox = target_face.bbox
+                                if use_gpu_blur:
+                                    frame = apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda')
+                                else:
+                                    frame = apply_border_blur(frame, bbox, blur_strength=15)
+                                
+                            except Exception as e:
+                                print(f"[DEBUG] Swap error: {e}")
+                                continue
                         
                         # Save processed frame
                         cv2.imwrite(frame_file, frame)
