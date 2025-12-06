@@ -36,6 +36,11 @@ def enable_tensorrt(fp16=True):
         'trt_fp16_enable': 'True' if fp16 else 'False',
         'trt_builder_optimization_level': '4',
         'trt_max_workspace_size': str(1 << 30),  # 1GB safe for 4060 Ti
+        # Limit dynamic shapes to typical InsightFace inputs to speed up build
+        # Most models use single input "data" in NCHW
+        'trt_profile_min_shapes': 'data:1x3x112x112',
+        'trt_profile_opt_shapes': 'data:1x3x192x192',
+        'trt_profile_max_shapes': 'data:1x3x640x640',
     }
 
     cuda_opts = {
