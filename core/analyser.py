@@ -35,7 +35,8 @@ def get_face_analyser():
             
             FACE_ANALYSER = insightface.app.FaceAnalysis(
                 name=model_name,
-                providers=core.globals.providers
+                providers=core.globals.providers,
+                provider_options=core.globals.provider_options
             )
             
             # RTX 4060 Ti: 640x640 je sweet spot - dobré detection + rychlost
