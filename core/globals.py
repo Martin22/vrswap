@@ -27,6 +27,7 @@ def enable_tensorrt(fp16=True):
     if fp16:
         os.environ.setdefault('ORT_TENSORRT_FP16_ENABLE', '1')
 
+    # Keep only ONNX Runtime 1.17-compatible TensorRT options (booleans as True/False strings)
     trt_opts = {
         'device_id': '0',
         'trt_engine_cache_enable': 'True',
@@ -34,15 +35,12 @@ def enable_tensorrt(fp16=True):
         'trt_timing_cache_enable': 'True',
         'trt_timing_cache_path': str(timing_cache),
         'trt_fp16_enable': 'True' if fp16 else 'False',
-        'trt_builder_optimization_level': '4',  # more aggressive than 3, still stable on 4060 Ti
-        'trt_max_workspace_size': str(1 << 31),  # 2GB safe for 4060 Ti
+        'trt_builder_optimization_level': '4',  # aggressive but stable on 4060 Ti
+        'trt_max_workspace_size': str(1 << 31),  # 2GB workspace cap
         'trt_cuda_graph_enable': 'True',         # reduce launch overhead
-        'trt_context_memory_sharing_enable': 'True',
         'trt_sparsity_enable': 'True',           # allow sparse kernels if supported
         'trt_dla_enable': 'False',               # no DLA on 4060 Ti
-        'trt_max_partition_iterations': '100',
-        'trt_min_subgraph_size': '1',           # fuse as much as possible
-        'trt_ep_context_enable': 'True',
+        # Removed experimental/unsupported flags (e.g., trt_ep_context_enable)
     }
 
     cuda_opts = {
