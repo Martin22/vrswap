@@ -450,6 +450,8 @@ class VideoProcessor:
                                         # Extract result back to original frame size
                                         frame = swapped_padded[pad_top:pad_top+h, pad_left:pad_left+w]
                                     except Exception as swap_err:
+                                        import traceback
+                                        traceback.print_exc()
                                         print(f"[DEBUG] Padded swap failed (bbox={bbox}): {swap_err}")
                                         continue
                                 else:
@@ -462,6 +464,8 @@ class VideoProcessor:
                                         else:
                                             frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
                                     except Exception as swap_err:
+                                        import traceback
+                                        traceback.print_exc()
                                         print(f"[DEBUG] Normal swap failed (bbox={bbox}): {swap_err}")
                                         continue
 
