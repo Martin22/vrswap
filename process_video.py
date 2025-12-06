@@ -313,6 +313,19 @@ class VideoProcessor:
                 print(f"[DEBUG] Perspective swap failed: {e}")
                 return None
 
+        def shifted_face(face, dx, dy):
+            """Return a shallow copy of face with bbox/kps shifted by dx,dy."""
+            import copy
+            f = copy.deepcopy(face)
+            if hasattr(f, 'bbox') and f.bbox is not None:
+                f.bbox = [f.bbox[0] + dx, f.bbox[1] + dy, f.bbox[2] + dx, f.bbox[3] + dy]
+            if hasattr(f, 'kps') and f.kps is not None:
+                f.kps = f.kps + np.array([dx, dy])
+            for attr in ['landmark_2d_106', 'landmark_3d_68', 'landmark_2d_5']:
+                if hasattr(f, attr) and getattr(f, attr) is not None:
+                    setattr(f, attr, getattr(f, attr) + np.array([dx, dy]))
+            return f
+
         def select_best_source(target_face):
             """Najdi nejlepší zdrojovou tvář podle embedding similarity (urychlí proces)."""
             if not self.source_faces:
@@ -361,42 +374,41 @@ class VideoProcessor:
                                         frame = perspective_frame
                                         continue
                                 
-                                # Handle 3D faces with negative coordinates by extending frame
+                                # Handle 3D faces with negative coordinates by extending frame and shifting landmarks
                                 bbox = target_face.bbox
                                 h, w = frame.shape[:2]
                                 x1, y1, x2, y2 = bbox
-                                
+
                                 # Skip faces completely outside frame
                                 if x1 >= w or y1 >= h or x2 <= 0 or y2 <= 0:
                                     continue
-                                
+
                                 # Skip faces that are way too far out
                                 if y2 < -200 or x2 < -200 or x1 > w + 200 or y1 > h + 200:
                                     print(f"[DEBUG] Skipping far out-of-bounds face (bbox={bbox}, frame_shape={frame.shape[:2]})")
                                     continue
-                                
+
                                 # Skip too small faces
                                 if (x2 - x1) <= 10 or (y2 - y1) <= 10:
                                     print(f"[DEBUG] Skipping too small bbox (bbox={bbox})")
                                     continue
-                                
+
                                 # Handle faces with negative coordinates by padding frame
                                 pad_top = max(0, int(-y1) + 10)
-                                pad_left = max(0, int(-x1) + 10) 
+                                pad_left = max(0, int(-x1) + 10)
                                 pad_bottom = max(0, int(y2 - h) + 10)
                                 pad_right = max(0, int(x2 - w) + 10)
-                                
+
                                 if pad_top > 0 or pad_left > 0 or pad_bottom > 0 or pad_right > 0:
                                     # Extend frame with padding
                                     padded_frame = cv2.copyMakeBorder(
-                                        frame, pad_top, pad_bottom, pad_left, pad_right, 
+                                        frame, pad_top, pad_bottom, pad_left, pad_right,
                                         cv2.BORDER_REPLICATE
                                     )
-                                    
-                                    # Adjust target face bbox for padded frame
-                                    adjusted_face = target_face
-                                    adjusted_face.bbox = [x1 + pad_left, y1 + pad_top, x2 + pad_left, y2 + pad_top]
-                                    
+
+                                    # Adjust target face bbox and landmarks for padded frame
+                                    adjusted_face = shifted_face(target_face, pad_left, pad_top)
+
                                     # Swap on padded frame
                                     try:
                                         if core.globals.use_fp16 and core.globals.device == 'cuda':
@@ -405,7 +417,7 @@ class VideoProcessor:
                                                 swapped_padded = self.swapper.get(padded_frame, adjusted_face, source_face, paste_back=True)
                                         else:
                                             swapped_padded = self.swapper.get(padded_frame, adjusted_face, source_face, paste_back=True)
-                                        
+
                                         # Extract result back to original frame size
                                         frame = swapped_padded[pad_top:pad_top+h, pad_left:pad_left+w]
                                     except Exception as swap_err:
