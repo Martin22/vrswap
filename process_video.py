@@ -236,6 +236,73 @@ class VideoProcessor:
             near_pole = y1 < 0.12 * h or y2 > 0.88 * h
             return large or near_pole
 
+        def swap_in_perspective(frame, target_face, source_face):
+            """Reproject local area to perspective to reduce equirect distortion, swap there, map back."""
+            try:
+                h, w = frame.shape[:2]
+                x1, y1, x2, y2 = target_face.bbox
+                cx = (x1 + x2) * 0.5
+                cy = (y1 + y2) * 0.5
+                # FOV podle velikosti boxu; clamp na rozumné hodnoty
+                fov = float(np.clip((x2 - x1) / w * 200.0, 80.0, 150.0))
+                size = 640
+
+                equ_cx = (w - 1) / 2.0
+                equ_cy = (h - 1) / 2.0
+                theta = (cx - equ_cx) / equ_cx * 180.0  # left/right
+                phi = -(cy - equ_cy) / equ_cy * 90.0    # up/down
+
+                # Build mapping (adapted from Equirec2Perspec without disk I/O)
+                wFOV = fov
+                hFOV = float(size) / size * wFOV
+                w_len = np.tan(np.radians(wFOV / 2.0))
+                h_len = np.tan(np.radians(hFOV / 2.0))
+
+                x_map = np.ones([size, size], np.float32)
+                y_map = np.tile(np.linspace(-w_len, w_len, size), [size, 1])
+                z_map = -np.tile(np.linspace(-h_len, h_len, size), [size, 1]).T
+
+                D = np.sqrt(x_map ** 2 + y_map ** 2 + z_map ** 2)
+                xyz = np.stack((x_map, y_map, z_map), axis=2) / np.repeat(D[:, :, np.newaxis], 3, axis=2)
+
+                y_axis = np.array([0.0, 1.0, 0.0], np.float32)
+                z_axis = np.array([0.0, 0.0, 1.0], np.float32)
+                R1, _ = cv2.Rodrigues(z_axis * np.radians(theta))
+                R2, _ = cv2.Rodrigues(np.dot(R1, y_axis) * np.radians(-phi))
+
+                xyz = xyz.reshape([size * size, 3]).T
+                xyz = np.dot(R1, xyz)
+                xyz = np.dot(R2, xyz).T
+                lat = np.arcsin(xyz[:, 2])
+                lon = np.arctan2(xyz[:, 1], xyz[:, 0])
+
+                lon = lon.reshape([size, size]) / np.pi * 180
+                lat = -lat.reshape([size, size]) / np.pi * 180
+
+                lon_map = lon / 180 * equ_cx + equ_cx
+                lat_map = lat / 90 * equ_cy + equ_cy
+
+                persp = cv2.remap(frame, lon_map.astype(np.float32), lat_map.astype(np.float32), cv2.INTER_CUBIC, borderMode=cv2.BORDER_WRAP)
+
+                # Run swap on perspective patch
+                if core.globals.use_fp16 and core.globals.device == 'cuda':
+                    import torch
+                    with torch.autocast('cuda', dtype=torch.float16):
+                        swapped = self.swapper.get(persp, target_face, source_face, paste_back=True)
+                else:
+                    swapped = self.swapper.get(persp, target_face, source_face, paste_back=True)
+
+                # Map back to equirect by scattering pixels
+                lx = np.clip(np.rint(lon_map), 0, w - 1).astype(np.int32)
+                ly = np.clip(np.rint(lat_map), 0, h - 1).astype(np.int32)
+                valid = (lx >= 0) & (lx < w) & (ly >= 0) & (ly < h)
+                frame_out = frame.copy()
+                frame_out[ly[valid], lx[valid]] = swapped[valid]
+                return frame_out
+            except Exception as e:
+                print(f"[DEBUG] Perspective swap failed: {e}")
+                return None
+
         def select_best_source(target_face):
             """Najdi nejlepší zdrojovou tvář podle embedding similarity (urychlí proces)."""
             if not self.source_faces:
@@ -276,6 +343,14 @@ class VideoProcessor:
                                 if best_source is None:
                                     continue
                                 source_face = best_source['data']
+
+                                # For extreme poles/close-ups, try perspective swap to reduce distortion
+                                perspective_frame = None
+                                if needs_pole_stabilization(target_face.bbox, frame.shape):
+                                    perspective_frame = swap_in_perspective(frame, target_face, source_face)
+                                    if perspective_frame is not None:
+                                        frame = perspective_frame
+                                        continue
                                 
                                 # RTX 4060 Ti: Direct swap s FP16
                                 if core.globals.use_fp16 and core.globals.device == 'cuda':
