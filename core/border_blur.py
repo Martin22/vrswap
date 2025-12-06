@@ -40,7 +40,7 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
         mask[0, 0, y1:y2, x1:x2] = 1.0
         
         # Erosion using max_pool2d (inverse)
-        feather_radius = 12
+        feather_radius = max(2, min(12, min(h, w) // 6))  # adapt na velikost bbox, aby nezmizela maska
         erosion_kernel_size = 2 * feather_radius + 1
         # Erosion = 1 - max_pool(-mask)
         mask_inv = 1.0 - mask
@@ -62,6 +62,8 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
         # Apply Gaussian blur to mask and frame
         mask_soft = F.conv2d(mask_eroded, gaussian_kernel, padding=kernel_size//2)
         mask_soft = torch.clamp(mask_soft, 0, 1)
+        # Normalizace, aby centrum zůstalo ~1 i u malých bbox
+        mask_soft = mask_soft / (mask_soft.amax() + 1e-6)
 
         # Blur the frame for edge feathering
         gaussian_kernel_3ch = gaussian_kernel.expand(3, 1, -1, -1)
@@ -130,6 +132,8 @@ def apply_border_blur(frame, bbox, blur_strength=15):
         # Aplikuj blur na erodovanou masku
         mask_soft = cv2.GaussianBlur(mask_eroded, (kernel_size, kernel_size), sigma)
         mask_soft = np.clip(mask_soft, 0, 1)
+        if mask_soft.max() > 1e-6:
+            mask_soft = mask_soft / mask_soft.max()
         
         # Připrav rozmazaný snímek pro měkké hrany
         frame_blurred = cv2.GaussianBlur(frame, (kernel_size, kernel_size), sigma)
