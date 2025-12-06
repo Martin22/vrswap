@@ -14,29 +14,53 @@ def get_face_analyser():
     if FACE_ANALYSER is None:
         try:
             # RTX 4060 Ti (16GB) - použij buffalo_l pro nejlepší kvalitu
+            # Allow user override via CLI (core.globals.detector_override)
+            override = getattr(core.globals, 'detector_override', 'auto')
+
+            def pick_by_override(mem_gb):
+                if override == 'l':
+                    return 'buffalo_l', (640, 640)
+                if override == 'm':
+                    return 'buffalo_m', (512, 512)
+                if override == 's':
+                    return 'buffalo_s', (512, 512)
+                # auto
+                if mem_gb >= 12:
+                    return 'buffalo_l', (640, 640)
+                if mem_gb >= 8:
+                    return 'buffalo_m', (512, 512)
+                return 'buffalo_s', (512, 512)
+
             if core.globals.device == 'cuda':
                 try:
                     device_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-                    if device_memory >= 12:
-                        model_name = 'buffalo_l'  # RTX 4060 Ti má 16GB → best quality
-                        det_size = (512, 512)  # menší det_size pro vyšší FPS
-                    elif device_memory >= 8:
-                        model_name = 'buffalo_m'
-                        det_size = (448, 448)
-                    else:
-                        model_name = 'buffalo_s'
-                        det_size = (448, 448)
+                    model_name, det_size = pick_by_override(device_memory)
                 except:
-                    model_name = 'buffalo_l'
-                    det_size = (512, 512)
+                    model_name, det_size = pick_by_override(12)
             else:
                 model_name = 'buffalo_s'
                 det_size = (512, 512)
             
+            # Use CUDA for analyser even when swapper runs TensorRT (TRT can be slower/unstable on analyser)
+            analyser_providers = core.globals.providers
+            analyser_opts = core.globals.provider_options
+            if 'TensorrtExecutionProvider' in analyser_providers:
+                # Drop TRT for analyser to improve stability
+                filtered = []
+                filtered_opts = []
+                for p, o in zip(analyser_providers, analyser_opts if analyser_opts else []):
+                    if p == 'TensorrtExecutionProvider':
+                        continue
+                    filtered.append(p)
+                    filtered_opts.append(o)
+                if filtered:
+                    analyser_providers = filtered
+                    analyser_opts = filtered_opts if filtered_opts else None
+
             FACE_ANALYSER = insightface.app.FaceAnalysis(
                 name=model_name,
-                providers=core.globals.providers,
-                provider_options=core.globals.provider_options
+                providers=analyser_providers,
+                provider_options=analyser_opts
             )
             
             # RTX 4060 Ti: 640x640 je sweet spot - dobré detection + rychlost
