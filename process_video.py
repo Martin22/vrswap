@@ -361,7 +361,7 @@ class VideoProcessor:
                                         frame = perspective_frame
                                         continue
                                 
-                                # Check if bbox is valid but allow partial faces for 3D
+                                # Handle 3D faces with negative coordinates by extending frame
                                 bbox = target_face.bbox
                                 h, w = frame.shape[:2]
                                 x1, y1, x2, y2 = bbox
@@ -370,27 +370,59 @@ class VideoProcessor:
                                 if x1 >= w or y1 >= h or x2 <= 0 or y2 <= 0:
                                     continue
                                 
-                                # Skip faces that are way too far out (but allow some overlap for 3D poles)
-                                if y2 < -100 or x2 < -100 or x1 > w + 100 or y1 > h + 100:
+                                # Skip faces that are way too far out
+                                if y2 < -200 or x2 < -200 or x1 > w + 200 or y1 > h + 200:
                                     print(f"[DEBUG] Skipping far out-of-bounds face (bbox={bbox}, frame_shape={frame.shape[:2]})")
                                     continue
                                 
-                                # Additional safety: ensure bbox has reasonable size
+                                # Skip too small faces
                                 if (x2 - x1) <= 10 or (y2 - y1) <= 10:
                                     print(f"[DEBUG] Skipping too small bbox (bbox={bbox})")
                                     continue
                                 
-                                # RTX 4060 Ti: Direct swap s FP16 - use original target_face
-                                try:
-                                    if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                        import torch
-                                        with torch.autocast('cuda', dtype=torch.float16):
+                                # Handle faces with negative coordinates by padding frame
+                                pad_top = max(0, int(-y1) + 10)
+                                pad_left = max(0, int(-x1) + 10) 
+                                pad_bottom = max(0, int(y2 - h) + 10)
+                                pad_right = max(0, int(x2 - w) + 10)
+                                
+                                if pad_top > 0 or pad_left > 0 or pad_bottom > 0 or pad_right > 0:
+                                    # Extend frame with padding
+                                    padded_frame = cv2.copyMakeBorder(
+                                        frame, pad_top, pad_bottom, pad_left, pad_right, 
+                                        cv2.BORDER_REPLICATE
+                                    )
+                                    
+                                    # Adjust target face bbox for padded frame
+                                    adjusted_face = target_face
+                                    adjusted_face.bbox = [x1 + pad_left, y1 + pad_top, x2 + pad_left, y2 + pad_top]
+                                    
+                                    # Swap on padded frame
+                                    try:
+                                        if core.globals.use_fp16 and core.globals.device == 'cuda':
+                                            import torch
+                                            with torch.autocast('cuda', dtype=torch.float16):
+                                                swapped_padded = self.swapper.get(padded_frame, adjusted_face, source_face, paste_back=True)
+                                        else:
+                                            swapped_padded = self.swapper.get(padded_frame, adjusted_face, source_face, paste_back=True)
+                                        
+                                        # Extract result back to original frame size
+                                        frame = swapped_padded[pad_top:pad_top+h, pad_left:pad_left+w]
+                                    except Exception as swap_err:
+                                        print(f"[DEBUG] Padded swap failed (bbox={bbox}): {swap_err}")
+                                        continue
+                                else:
+                                    # Normal swap for faces within bounds
+                                    try:
+                                        if core.globals.use_fp16 and core.globals.device == 'cuda':
+                                            import torch
+                                            with torch.autocast('cuda', dtype=torch.float16):
+                                                frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                        else:
                                             frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                    else:
-                                        frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                except Exception as swap_err:
-                                    print(f"[DEBUG] Swap failed (bbox={target_face.bbox}, frame_shape={frame.shape[:2]}): {swap_err}")
-                                    continue
+                                    except Exception as swap_err:
+                                        print(f"[DEBUG] Normal swap failed (bbox={bbox}): {swap_err}")
+                                        continue
                                 
                                 # RTX 4060 Ti: GPU-accelerated border blur
                                 bbox = target_face.bbox
