@@ -8,6 +8,7 @@ import core.globals
 from core.analyser import get_face
 import torch
 import numpy as np
+import traceback
 
 FACE_SWAPPER = None
 
@@ -102,19 +103,12 @@ def get_swapped_face(frame, target_face, source_face):
     """
     Perform face swap s optimalizacemi.
     
-    Args:
-        frame: Source frame
-        target_face: Target face to replace
-        source_face: Source face to insert
-        
-    Returns:
-        Swapped frame
-    """
-    swapper = get_face_swapper()
-    
-    try:
-        # FP16 optimization pokud je dostupná
-        if core.globals.use_fp16 and core.globals.device == 'cuda':
+        try:
+            FACE_SWAPPER = insightface.model_zoo.get_model(
+                model_path,
+                providers=core.globals.providers,
+                provider_options=core.globals.provider_options
+            )
             with torch.autocast('cuda'):
                 result = swapper.get(frame, target_face, source_face, paste_back=True)
         else:
@@ -123,11 +117,12 @@ def get_swapped_face(frame, target_face, source_face):
         # Clear cache
         if core.globals.device == 'cuda':
             try:
-                torch.cuda.empty_cache()
-            except:
-                pass
-        
-        return result
-    except Exception as e:
-        print(f"Face swap error: {e}")
-        return frame
+                # Try to enable ONNX Runtime IO binding for faster GPU path (skip when TensorRT is active)
+                try:
+                    # If TensorRT EP is present, avoid monkey-patching
+                    if 'TensorrtExecutionProvider' not in (core.globals.providers or []):
+                        sess = getattr(FACE_SWAPPER, 'model', None)
+                        if sess is not None and hasattr(sess, 'io_binding') and hasattr(sess, 'run_with_iobinding'):
+                            inputs = sess.get_inputs()
+                            outputs = sess.get_outputs()
+                            torch.cuda.empty_cache()

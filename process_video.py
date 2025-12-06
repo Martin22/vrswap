@@ -220,6 +220,8 @@ class VideoProcessor:
         
         if self.swapper is None:
             self.swapper = get_face_swapper()
+            if self.swapper is None:
+                print("[ERROR] get_face_swapper returned None")
         
         processed_count = 0
         frame_counter = 0
@@ -299,7 +301,7 @@ class VideoProcessor:
                 import traceback
                 bbox_dbg = getattr(tgt_face, 'bbox', None)
                 kps_dbg = getattr(tgt_face, 'kps', None)
-                print(f"[DEBUG] Swapper call failed. swapper={type(self.swapper)}, device={core.globals.device}, providers={core.globals.providers}, paste_back={paste_back}, bbox={bbox_dbg}, kps_shape={(kps_dbg.shape if kps_dbg is not None else None)}")
+                print(f"[DEBUG] Swapper call failed. swapper={type(self.swapper)}, device={core.globals.device}, providers={core.globals.providers}, paste_back={paste_back}, bbox={bbox_dbg}, kps_shape={(kps_dbg.shape if kps_dbg is not None else None)}, frame_shape={frame_in.shape if hasattr(frame_in, 'shape') else None}, tgt_face={tgt_face}")
                 traceback.print_exc()
                 raise
 
@@ -338,6 +340,9 @@ class VideoProcessor:
 
                 # Re-detect face in perspective space to avoid bbox mismatch
                 persp_faces = get_faces(persp)
+                if persp_faces is None:
+                    print("[DEBUG] get_faces returned None in perspective path")
+                    return None
                 if not persp_faces:
                     return None
                 persp_target = persp_faces[0]
@@ -353,6 +358,8 @@ class VideoProcessor:
                 frame_out[ly[valid], lx[valid]] = swapped[valid]
                 return frame_out
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 print(f"[DEBUG] Perspective swap failed: {e}")
                 return None
 
@@ -401,6 +408,9 @@ class VideoProcessor:
                     
                     # Get all target faces in this frame
                     target_faces = get_faces(frame)
+                    if target_faces is None:
+                        print("[DEBUG] get_faces returned None")
+                        target_faces = []
                     
                     if target_faces:
                         for target_face in target_faces:
@@ -409,6 +419,9 @@ class VideoProcessor:
                                 if best_source is None:
                                     continue
                                 source_face = best_source['data']
+                                if source_face is None:
+                                    print("[DEBUG] source_face is None for target", target_face)
+                                    continue
 
                                 # For extreme poles/close-ups, optionally try perspective swap to reduce distortion
                                 if core.globals.perspective_poles and needs_pole_stabilization(target_face.bbox, frame.shape):
@@ -458,7 +471,7 @@ class VideoProcessor:
                                         # Extract result back to original frame size
                                         frame = swapped_padded[pad_top:pad_top+h, pad_left:pad_left+w]
                                     except Exception as swap_err:
-                                        print(f"[DEBUG] Padded swap failed (bbox={bbox}): {swap_err}")
+                                        print(f"[DEBUG] Padded swap failed (bbox={bbox}, pads={(pad_top, pad_bottom, pad_left, pad_right)}, adjusted_bbox={adjusted_face.bbox}): {swap_err}")
                                         continue
                                 else:
                                     # Normal swap for faces within bounds
@@ -527,6 +540,8 @@ class VideoProcessor:
                     pbar.update(1)
                     
                 except Exception as e:
+                    import traceback
+                    traceback.print_exc()
                     print(f"[ERROR] Frame processing error: {e}")
                     pbar.update(1)
                     continue
