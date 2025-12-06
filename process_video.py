@@ -239,7 +239,8 @@ class VideoProcessor:
         def swap_in_perspective(frame, target_face, source_face):
             """Reproject local area to perspective to reduce equirect distortion, swap there, map back.
 
-            Experimental: may fail on some faces; errors are swallowed and fall back to normal swap.
+            Experimental: re-detect face on the perspective patch to avoid bbox mismatch.
+            Errors are swallowed and fall back to normal swap.
             """
             try:
                 h, w = frame.shape[:2]
@@ -287,13 +288,19 @@ class VideoProcessor:
 
                 persp = cv2.remap(frame, lon_map.astype(np.float32), lat_map.astype(np.float32), cv2.INTER_CUBIC, borderMode=cv2.BORDER_WRAP)
 
+                # Re-detect face in perspective space to avoid bbox mismatch
+                persp_faces = get_faces(persp)
+                if not persp_faces:
+                    return None
+                persp_target = persp_faces[0]
+
                 # Run swap on perspective patch
                 if core.globals.use_fp16 and core.globals.device == 'cuda':
                     import torch
                     with torch.autocast('cuda', dtype=torch.float16):
-                        swapped = self.swapper.get(persp, target_face, source_face, paste_back=True)
+                        swapped = self.swapper.get(persp, persp_target, source_face, paste_back=True)
                 else:
-                    swapped = self.swapper.get(persp, target_face, source_face, paste_back=True)
+                    swapped = self.swapper.get(persp, persp_target, source_face, paste_back=True)
 
                 # Map back to equirect by scattering pixels
                 lx = np.clip(np.rint(lon_map), 0, w - 1).astype(np.int32)
