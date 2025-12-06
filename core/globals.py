@@ -29,12 +29,13 @@ def enable_tensorrt(fp16=True):
 
     trt_opts = {
         'device_id': '0',
-        'trt_engine_cache_enable': '1',
+        'trt_engine_cache_enable': 'True',
         'trt_engine_cache_path': str(cache_dir),
-        'trt_timing_cache_enable': '1',
+        'trt_timing_cache_enable': 'True',
         'trt_timing_cache_path': str(timing_cache),
-        'trt_fp16_enable': '1' if fp16 else '0',
+        'trt_fp16_enable': 'True' if fp16 else 'False',
         'trt_builder_optimization_level': '4',
+        'trt_max_workspace_size': str(1 << 30),  # 1GB safe for 4060 Ti
     }
 
     cuda_opts = {
