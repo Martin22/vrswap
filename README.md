@@ -82,20 +82,25 @@ ffmpeg -version
 
 ### TensorRT Setup (Optional - For Maximum Performance)
 
-TensorRT can provide 20-50% faster inference than standard CUDA.
+TensorRT can provide 20-50% faster inference than standard CUDA. Není třeba předem exportovat engine – TensorRT Execution Provider si jej sestaví při prvním běhu.
 
+**Windows / Linux (Conda env):**
 ```bash
-# 1. Ensure build tools are up to date (Critical for installation)
 python -m pip install --upgrade pip setuptools wheel
-
-# 2. Install TensorRT 8.6.1 (requires NVIDIA index for Windows)
 pip install tensorrt==8.6.1 --extra-index-url https://pypi.nvidia.com
+pip install onnxruntime-gpu==1.17.0  # ORT s TensorRT EP podporou
 
-# Verify installation
-python -c "import tensorrt; print(tensorrt.__version__)"
+# Volitelné (zrychlení, pokud máte FP16):
+set ORT_TENSORRT_FP16_ENABLE=1        # Windows
+export ORT_TENSORRT_FP16_ENABLE=1     # Linux/WSL
+# Workspace (TRT engine cache) – 1GB je bezpečné pro RTX 4060 Ti
+set ORT_TENSORRT_MAX_WORKSPACE_SIZE=1073741824
+export ORT_TENSORRT_MAX_WORKSPACE_SIZE=1073741824
+
+python -c "import tensorrt; import onnxruntime as ort; print('TRT', tensorrt.__version__); print('EPs', ort.get_available_providers())"
 ```
 
-To use it, add `--execution-provider tensorrt` to your commands.
+Použití: přidejte `--execution-provider tensorrt` do příkazu (`process_video.py` nebo `swap.py`).
 
 ### Troubleshooting Installation
 

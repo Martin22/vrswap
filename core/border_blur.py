@@ -59,13 +59,17 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
         gaussian_kernel = gaussian_1d.view(1, -1) * gaussian_1d.view(-1, 1)
         gaussian_kernel = gaussian_kernel.view(1, 1, kernel_size, kernel_size)
         
-        # Apply Gaussian blur
+        # Apply Gaussian blur to mask and frame
         mask_soft = F.conv2d(mask_eroded, gaussian_kernel, padding=kernel_size//2)
         mask_soft = torch.clamp(mask_soft, 0, 1)
+
+        # Blur the frame for edge feathering
+        gaussian_kernel_3ch = gaussian_kernel.expand(3, 1, -1, -1)
+        frame_blurred = F.conv2d(frame_tensor, gaussian_kernel_3ch, padding=kernel_size//2, groups=3)
         
-        # Blend (in-place pro rychlost)
+        # Blend blurred + sharp frame using soft mask (eliminates rectangle edges)
         mask_3ch = mask_soft.expand(1, 3, -1, -1)
-        result = frame_tensor * mask_3ch + frame_tensor * (1 - mask_3ch)
+        result = frame_tensor * mask_3ch + frame_blurred * (1 - mask_3ch)
         
         # Convert back
         result = result.squeeze(0).permute(1, 2, 0).cpu().numpy()
@@ -127,12 +131,12 @@ def apply_border_blur(frame, bbox, blur_strength=15):
         mask_soft = cv2.GaussianBlur(mask_eroded, (kernel_size, kernel_size), sigma)
         mask_soft = np.clip(mask_soft, 0, 1)
         
-        # Blend frame s měkkou maskou
-        mask_3ch = np.stack([mask_soft] * 3, axis=-1)
+        # Připrav rozmazaný snímek pro měkké hrany
+        frame_blurred = cv2.GaussianBlur(frame, (kernel_size, kernel_size), sigma)
         
-        # Aplikuj blend - měkký přechod na okrajích
-        result = frame.astype(np.float32) * mask_3ch
-        result += frame.astype(np.float32) * (1 - mask_3ch)
+        # Blend: ostrý swap uvnitř, rozmazané okraje venku
+        mask_3ch = np.stack([mask_soft] * 3, axis=-1)
+        result = frame.astype(np.float32) * mask_3ch + frame_blurred.astype(np.float32) * (1 - mask_3ch)
         
         return np.clip(result, 0, 255).astype(np.uint8)
     
