@@ -1,4 +1,3 @@
-"""
 """Border Blur Module - Post-processing pro paste_back=True
 Implementuje VisoMaster border blending strategie
 RTX 4060 Ti OPTIMIZED - GPU accelerated kernels
