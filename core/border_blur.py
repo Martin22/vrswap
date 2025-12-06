@@ -31,13 +31,23 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
         if h <= 0 or w <= 0 or x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
             return frame
         
-        # Convert to torch tensor
-        frame_tensor = torch.from_numpy(frame).to(device).float()
+        # Pracuj pouze v ROI okolo bbox, aby se nerozmazal celý snímek
+        pad = max(blur_strength * 2, 32)
+        rx1 = max(0, x1 - pad)
+        ry1 = max(0, y1 - pad)
+        rx2 = min(frame.shape[1], x2 + pad)
+        ry2 = min(frame.shape[0], y2 + pad)
+
+        frame_roi = frame[ry1:ry2, rx1:rx2]
+        roi_h, roi_w = frame_roi.shape[:2]
+
+        # Convert to torch tensor (ROI only)
+        frame_tensor = torch.from_numpy(frame_roi).to(device).float()
         frame_tensor = frame_tensor.permute(2, 0, 1).unsqueeze(0)  # (1, C, H, W)
         
-        # Create mask
-        mask = torch.zeros((1, 1, frame.shape[0], frame.shape[1]), device=device)
-        mask[0, 0, y1:y2, x1:x2] = 1.0
+        # Create mask in ROI coords
+        mask = torch.zeros((1, 1, roi_h, roi_w), device=device)
+        mask[0, 0, y1 - ry1:y2 - ry1, x1 - rx1:x2 - rx1] = 1.0
         
         # Erosion using max_pool2d (inverse)
         feather_radius = max(2, min(12, min(h, w) // 6))  # adapt na velikost bbox, aby nezmizela maska
@@ -76,8 +86,11 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
         # Convert back
         result = result.squeeze(0).permute(1, 2, 0).cpu().numpy()
         result = np.clip(result, 0, 255).astype(np.uint8)
-        
-        return result
+
+        # Vlož zpět jen ROI, zbytek snímku zůstává ostrý
+        output = frame.copy()
+        output[ry1:ry2, rx1:rx2] = result
+        return output
     
     except Exception as e:
         print(f"[DEBUG] GPU border blur failed, fallback to CPU: {e}")
@@ -105,9 +118,19 @@ def apply_border_blur(frame, bbox, blur_strength=15):
         if h <= 0 or w <= 0 or x1 < 0 or y1 < 0 or x2 > frame.shape[1] or y2 > frame.shape[0]:
             return frame
         
-        # Vytvoř binární masku s 1 v bbox regionu, 0 jinde
-        mask = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.float32)
-        mask[y1:y2, x1:x2] = 1.0
+        # ROI pouze kolem bbox, aby se nerozmazal celý frame
+        pad = max(blur_strength * 2, 32)
+        rx1 = max(0, x1 - pad)
+        ry1 = max(0, y1 - pad)
+        rx2 = min(frame.shape[1], x2 + pad)
+        ry2 = min(frame.shape[0], y2 + pad)
+
+        frame_roi = frame[ry1:ry2, rx1:rx2]
+        roi_h, roi_w = frame_roi.shape[:2]
+
+        # Vytvoř binární masku s 1 v bbox regionu (v ROI souřadnicích)
+        mask = np.zeros((roi_h, roi_w), dtype=np.float32)
+        mask[y1 - ry1:y2 - ry1, x1 - rx1:x2 - rx1] = 1.0
         
         # === OPRAVENO: Balanced feathering jako VisoMaster ===
         # 1. Erosion pro stažení okrajů dovnitř
@@ -135,14 +158,17 @@ def apply_border_blur(frame, bbox, blur_strength=15):
         if mask_soft.max() > 1e-6:
             mask_soft = mask_soft / mask_soft.max()
         
-        # Připrav rozmazaný snímek pro měkké hrany
-        frame_blurred = cv2.GaussianBlur(frame, (kernel_size, kernel_size), sigma)
+        # Připrav rozmazaný snímek pro měkké hrany (jen ROI)
+        frame_blurred = cv2.GaussianBlur(frame_roi, (kernel_size, kernel_size), sigma)
         
         # Blend: ostrý swap uvnitř, rozmazané okraje venku
         mask_3ch = np.stack([mask_soft] * 3, axis=-1)
-        result = frame.astype(np.float32) * mask_3ch + frame_blurred.astype(np.float32) * (1 - mask_3ch)
-        
-        return np.clip(result, 0, 255).astype(np.uint8)
+        result = frame_roi.astype(np.float32) * mask_3ch + frame_blurred.astype(np.float32) * (1 - mask_3ch)
+        result = np.clip(result, 0, 255).astype(np.uint8)
+
+        output = frame.copy()
+        output[ry1:ry2, rx1:rx2] = result
+        return output
     
     except Exception as e:
         print(f"[DEBUG] Border blur error: {e}")
