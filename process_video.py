@@ -361,7 +361,7 @@ class VideoProcessor:
                                         frame = perspective_frame
                                         continue
                                 
-                                # Check if bbox is valid (not clipped out of frame bounds)
+                                # Check if bbox is valid (not completely out of frame bounds)
                                 bbox = target_face.bbox
                                 h, w = frame.shape[:2]
                                 x1, y1, x2, y2 = bbox
@@ -370,24 +370,28 @@ class VideoProcessor:
                                 if x1 >= w or y1 >= h or x2 <= 0 or y2 <= 0:
                                     continue
                                 
-                                # Skip faces with any negative coordinates or extending beyond frame
-                                if y1 < 0 or y2 < 0 or x1 < 0 or x2 < 0 or x2 > w or y2 > h:
-                                    print(f"[DEBUG] Skipping out-of-bounds face (bbox={bbox}, frame_shape={frame.shape[:2]})")
+                                # Skip faces that are too far out of bounds (but allow some overlap)
+                                if y2 < -50 or x2 < -50 or x1 > w + 50 or y1 > h + 50:
+                                    print(f"[DEBUG] Skipping far out-of-bounds face (bbox={bbox}, frame_shape={frame.shape[:2]})")
                                     continue
                                 
                                 # Additional safety: ensure bbox has reasonable size
-                                if (x2 - x1) <= 0 or (y2 - y1) <= 0:
-                                    print(f"[DEBUG] Skipping invalid bbox size (bbox={bbox})")
+                                if (x2 - x1) <= 10 or (y2 - y1) <= 10:
+                                    print(f"[DEBUG] Skipping too small bbox (bbox={bbox})")
                                     continue
+                                
+                                # Clamp bbox to frame bounds for swapper
+                                target_face_clamped = target_face
+                                target_face_clamped.bbox = [max(0, x1), max(0, y1), min(w, x2), min(h, y2)]
                                 
                                 # RTX 4060 Ti: Direct swap s FP16
                                 try:
                                     if core.globals.use_fp16 and core.globals.device == 'cuda':
                                         import torch
                                         with torch.autocast('cuda', dtype=torch.float16):
-                                            frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                            frame = self.swapper.get(frame, target_face_clamped, source_face, paste_back=True)
                                     else:
-                                        frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                        frame = self.swapper.get(frame, target_face_clamped, source_face, paste_back=True)
                                 except Exception as swap_err:
                                     print(f"[DEBUG] Swap failed (bbox={target_face.bbox}, frame_shape={frame.shape[:2]}): {swap_err}")
                                     continue
