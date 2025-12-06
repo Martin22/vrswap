@@ -231,8 +231,53 @@ class VideoProcessor:
         # Cache for perspective remap grids to reduce overhead in VR-like pole handling
         persp_cache = {}
 
+        def _inverse_perspective_maps(theta, phi, fov, size, w, h):
+            """Return maps from equirect coords -> perspective patch (size x size) plus validity mask."""
+            key = ("inv", round(theta, 2), round(phi, 2), round(fov, 1), size, w, h)
+            if key in persp_cache:
+                return persp_cache[key]
+
+            wFOV = fov
+            hFOV = float(size) / size * wFOV
+            w_len = np.tan(np.radians(wFOV / 2.0))
+            h_len = np.tan(np.radians(hFOV / 2.0))
+
+            # Build equirect grid in radians
+            x = np.linspace(-np.pi, np.pi, w, dtype=np.float32)
+            y = np.linspace(np.pi / 2.0, -np.pi / 2.0, h, dtype=np.float32)
+            lon, lat = np.meshgrid(x, y)
+
+            # Unit sphere points
+            xyz = np.zeros((h, w, 3), dtype=np.float32)
+            xyz[..., 0] = np.cos(lat) * np.cos(lon)
+            xyz[..., 1] = np.cos(lat) * np.sin(lon)
+            xyz[..., 2] = np.sin(lat)
+
+            y_axis = np.array([0.0, 1.0, 0.0], np.float32)
+            z_axis = np.array([0.0, 0.0, 1.0], np.float32)
+            R1, _ = cv2.Rodrigues(z_axis * np.radians(theta))
+            R2, _ = cv2.Rodrigues(np.dot(R1, y_axis) * np.radians(-phi))
+
+            pts = xyz.reshape(-1, 3).T
+            pts = np.dot(R2, pts)
+            pts = np.dot(R1, pts).T
+            pts = pts.reshape(h, w, 3)
+
+            # Avoid divide-by-zero
+            pts_x = pts[..., 0]
+            pts_y = pts[..., 1] / (pts_x + 1e-8)
+            pts_z = pts[..., 2] / (pts_x + 1e-8)
+
+            valid = (pts_x > 0) & (np.abs(pts_y) < w_len) & (np.abs(pts_z) < h_len)
+
+            map_x = (pts_y + w_len) / (2 * w_len) * (size - 1)
+            map_y = (-pts_z + h_len) / (2 * h_len) * (size - 1)
+
+            persp_cache[key] = (map_x.astype(np.float32), map_y.astype(np.float32), valid)
+            return persp_cache[key]
+
         def cached_perspective_grid(theta, phi, fov, size, w, h):
-            key = (round(theta, 2), round(phi, 2), round(fov, 1), size, w, h)
+            key = ("fwd", round(theta, 2), round(phi, 2), round(fov, 1), size, w, h)
             if key in persp_cache:
                 return persp_cache[key]
 
@@ -268,7 +313,16 @@ class VideoProcessor:
             lon_map = lon / 180 * equ_cx + equ_cx
             lat_map = lat / 90 * equ_cy + equ_cy
 
-            persp_cache[key] = (lon_map.astype(np.float32), lat_map.astype(np.float32))
+            # Also cache inverse maps for stitching back
+            inv_map_x, inv_map_y, inv_valid = _inverse_perspective_maps(theta, phi, fov, size, w, h)
+
+            persp_cache[key] = (
+                lon_map.astype(np.float32),
+                lat_map.astype(np.float32),
+                inv_map_x,
+                inv_map_y,
+                inv_valid,
+            )
             return persp_cache[key]
 
         def soft_bbox_mask(h, w, border):
@@ -359,7 +413,7 @@ class VideoProcessor:
                 theta = (cx - equ_cx) / equ_cx * 180.0  # left/right
                 phi = -(cy - equ_cy) / equ_cy * 90.0    # up/down
 
-                lon_map, lat_map = cached_perspective_grid(theta, phi, fov, size, w, h)
+                lon_map, lat_map, inv_map_x, inv_map_y, inv_valid = cached_perspective_grid(theta, phi, fov, size, w, h)
                 persp = cv2.remap(frame, lon_map, lat_map, cv2.INTER_CUBIC, borderMode=cv2.BORDER_WRAP)
 
                 # Re-detect face in perspective space to avoid bbox mismatch
@@ -374,12 +428,13 @@ class VideoProcessor:
                 # Run swap on perspective patch
                 swapped = safe_swap_call(persp, persp_target, source_face, paste_back=True)
 
-                # Map back to equirect by scattering pixels
-                lx = np.clip(np.rint(lon_map), 0, w - 1).astype(np.int32)
-                ly = np.clip(np.rint(lat_map), 0, h - 1).astype(np.int32)
-                valid = (lx >= 0) & (lx < w) & (ly >= 0) & (ly < h)
+                # Map back to equirect using inverse maps (bilinear), keep only valid region
+                remapped = cv2.remap(swapped, inv_map_x, inv_map_y, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
                 frame_out = frame.copy()
-                frame_out[ly[valid], lx[valid]] = swapped[valid]
+                if inv_valid is not None:
+                    frame_out[inv_valid] = remapped[inv_valid]
+                else:
+                    frame_out = remapped
                 return frame_out
             except Exception as e:
                 import traceback
