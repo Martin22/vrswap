@@ -156,6 +156,7 @@ class VideoProcessor:
                 "ffmpeg",
                 "-hwaccel", "cuda",                    # Enable CUDA hardware acceleration
                 "-hwaccel_device", "0",                # Use first GPU
+                "-c:v", "h264_cuvid",                  # Faster NVDEC h264 decoder
                 "-i", self.video_path,
                 "-qscale:v", "2",                      # High quality JPG
                 "-v", "error",
