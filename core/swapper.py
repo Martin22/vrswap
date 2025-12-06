@@ -17,9 +17,13 @@ def get_face_swapper():
     if FACE_SWAPPER is None:
         model_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../inswapper_128_fp16.onnx')
         
-        # Load model using insightface
+        # Load model using insightface (pass provider_options if available)
         try:
-            FACE_SWAPPER = insightface.model_zoo.get_model(model_path, providers=core.globals.providers)
+            FACE_SWAPPER = insightface.model_zoo.get_model(
+                model_path,
+                providers=core.globals.providers,
+                provider_options=core.globals.provider_options
+            )
         except Exception as e:
             print(f"Error loading model: {e}")
             raise e

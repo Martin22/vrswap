@@ -415,12 +415,21 @@ Examples:
     if not args.gpu or args.execution_provider == 'cpu':
         args.gpu = False
         core.globals.providers = ['CPUExecutionProvider']
+        core.globals.provider_options = [{}]
         print("[INFO] Using CPU mode")
     elif args.execution_provider == 'tensorrt':
-        core.globals.providers = ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
-        print("[INFO] Using GPU mode (TensorRT)")
+        core.globals.enable_tensorrt(fp16=True)
+        print("[INFO] Using GPU mode (TensorRT) with engine caching")
     else:
         core.globals.providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        core.globals.provider_options = [
+            {
+                'device_id': '0',
+                'cudnn_conv_algo_search': 'EXHAUSTIVE',
+                'do_copy_in_default_stream': '1',
+            },
+            {}
+        ]
         print("[INFO] Using GPU mode (CUDA)")
     
     # Create processor and run
