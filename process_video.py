@@ -365,12 +365,19 @@ class VideoProcessor:
                                 bbox = target_face.bbox
                                 h, w = frame.shape[:2]
                                 x1, y1, x2, y2 = bbox
+                                
+                                # Skip faces completely outside frame
                                 if x1 >= w or y1 >= h or x2 <= 0 or y2 <= 0:
-                                    # Face completely outside frame
                                     continue
-                                if y1 < 0 or y2 < 0 or x1 < 0 or x2 < 0:
-                                    # Face partially outside frame - skip to avoid index errors
-                                    print(f"[DEBUG] Skipping partial face (bbox={bbox}, frame_shape={frame.shape[:2]})")
+                                
+                                # Skip faces with any negative coordinates or extending beyond frame
+                                if y1 < 0 or y2 < 0 or x1 < 0 or x2 < 0 or x2 > w or y2 > h:
+                                    print(f"[DEBUG] Skipping out-of-bounds face (bbox={bbox}, frame_shape={frame.shape[:2]})")
+                                    continue
+                                
+                                # Additional safety: ensure bbox has reasonable size
+                                if (x2 - x1) <= 0 or (y2 - y1) <= 0:
+                                    print(f"[DEBUG] Skipping invalid bbox size (bbox={bbox})")
                                     continue
                                 
                                 # RTX 4060 Ti: Direct swap s FP16
