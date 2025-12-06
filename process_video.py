@@ -149,6 +149,32 @@ class VideoProcessor:
         os.makedirs(self.frames_dir)
         
         output_pattern = os.path.join(self.frames_dir, "%06d.jpg")
+
+        def _detect_codec(path):
+            try:
+                probe = subprocess.run(
+                    [
+                        "ffprobe", "-v", "error", "-select_streams", "v:0",
+                        "-show_entries", "stream=codec_name", "-of", "default=nw=1:nk=1", path
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                return probe.stdout.strip()
+            except Exception:
+                return None
+
+        decoder_map = {
+            "h264": "h264_cuvid",
+            "hevc": "hevc_cuvid",
+            "h265": "hevc_cuvid",
+            "av1": "av1_cuvid",
+            "vp9": "vp9_cuvid",
+            "mpeg2video": "mpeg2_cuvid",
+        }
+        codec_name = _detect_codec(self.video_path) if self.gpu else None
+        chosen_decoder = decoder_map.get(codec_name) if codec_name else None
         
         # FFmpeg command with NVIDIA GPU acceleration for decoding
         if self.gpu:
@@ -156,6 +182,8 @@ class VideoProcessor:
                 "ffmpeg",
                 "-hwaccel", "cuda",                    # Enable CUDA hardware acceleration
                 "-hwaccel_device", "0",                # Use first GPU
+                # Choose fastest NVDEC decoder per codec if known
+                *( ["-c:v", chosen_decoder] if chosen_decoder else [] ),
                 "-i", self.video_path,
                 "-qscale:v", "2",                      # High quality JPG
                 "-v", "error",
