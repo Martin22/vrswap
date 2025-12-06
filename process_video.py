@@ -21,6 +21,7 @@ import core.globals
 from core.swapper import get_face_swapper
 from core.analyser import get_face, get_faces
 from core.advanced_blending import AdvancedFaceBlender
+from core.face_warping import warp_face, unwarp_face, create_soft_mask
 
 
 class VideoProcessor:
@@ -195,13 +196,37 @@ class VideoProcessor:
                             
                             for target_face in target_faces:
                                 try:
-                                    # FP16 if available
-                                    if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                        import torch
-                                        with torch.autocast('cuda'):
-                                            frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                    # Warp tvář podle landmarks do standardní polohy (Rope-next approach)
+                                    if hasattr(target_face, 'kps') and target_face.kps is not None:
+                                        warped_face, M_o2c, M_c2o = warp_face(frame, target_face.kps, target_size=512)
+                                        if warped_face is not None:
+                                            # Swap na warpované tváři
+                                            if core.globals.use_fp16 and core.globals.device == 'cuda':
+                                                import torch
+                                                with torch.autocast('cuda'):
+                                                    swapped_warped = self.swapper.get(warped_face, target_face, source_face, paste_back=True)
+                                            else:
+                                                swapped_warped = self.swapper.get(warped_face, target_face, source_face, paste_back=True)
+                                            
+                                            # Unwarp zpět do originálu
+                                            swapped_unwarped = unwarp_face(swapped_warped, M_c2o, frame.shape)
+                                            frame = swapped_unwarped
+                                        else:
+                                            # Fallback - bez warpingu
+                                            if core.globals.use_fp16 and core.globals.device == 'cuda':
+                                                import torch
+                                                with torch.autocast('cuda'):
+                                                    frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                            else:
+                                                frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
                                     else:
-                                        frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                        # Fallback - bez landmarks
+                                        if core.globals.use_fp16 and core.globals.device == 'cuda':
+                                            import torch
+                                            with torch.autocast('cuda'):
+                                                frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                        else:
+                                            frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
                                 except Exception as e:
                                     print(f"[DEBUG] Swap error: {e}")
                                     import traceback

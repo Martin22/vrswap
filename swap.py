@@ -12,6 +12,7 @@ import core.globals
 from pathlib import Path
 from core.swapper import get_face_swapper
 from core.analyser import get_face, get_faces, get_face_analyser
+from core.face_warping import warp_face, unwarp_face, create_soft_mask
 from threading import Thread
 import threading
 import cv2
@@ -246,14 +247,43 @@ def process_frames(source_img, frame_paths):
                     progress.update(1)
                     continue
                 
-                # Swap s FP16 supportem
+                # Swap s warping + FP16 supportem (Rope-next approach)
                 result = frame.copy()
                 for target_face in target_faces:
-                    if core.globals.use_fp16 and core.globals.device == 'cuda':
-                        with torch.autocast('cuda'):
-                            result = swapper.get(result, target_face, source_face, paste_back=True)
+                    # Warp tvář podle landmarks do standardní polohy
+                    if hasattr(target_face, 'kps') and target_face.kps is not None:
+                        warped_face, M_o2c, M_c2o = warp_face(frame, target_face.kps, target_size=512)
+                        if warped_face is None:
+                            # Fallback - bez warpingu
+                            if core.globals.use_fp16 and core.globals.device == 'cuda':
+                                with torch.autocast('cuda'):
+                                    result = swapper.get(result, target_face, source_face, paste_back=True)
+                            else:
+                                result = swapper.get(result, target_face, source_face, paste_back=True)
+                            continue
+                        
+                        # Detekuj source face v warped coordinátech (zjednodušeno - použij celý warped frame)
+                        # Swap na warpované tváři
+                        if core.globals.use_fp16 and core.globals.device == 'cuda':
+                            with torch.autocast('cuda'):
+                                swapped_warped = swapper.get(warped_face, target_face, source_face, paste_back=True)
+                        else:
+                            swapped_warped = swapper.get(warped_face, target_face, source_face, paste_back=True)
+                        
+                        # Unwarp zpět do originálu
+                        swapped_unwarped = unwarp_face(swapped_warped, M_c2o, frame.shape)
+                        
+                        # Blend s měkkou maskou
+                        mask = create_soft_mask(512, border_width=40)
+                        # TODO: Blend warped verzi s originálním framen s maskou
+                        result = swapped_unwarped
                     else:
-                        result = swapper.get(result, target_face, source_face, paste_back=True)
+                        # Fallback - bez warpingu pokud landmarks nejsou dostupné
+                        if core.globals.use_fp16 and core.globals.device == 'cuda':
+                            with torch.autocast('cuda'):
+                                result = swapper.get(result, target_face, source_face, paste_back=True)
+                        else:
+                            result = swapper.get(result, target_face, source_face, paste_back=True)
                 
                 # Ulož
                 cv2.imwrite(frame_path, result)
