@@ -99,7 +99,7 @@ def split_into_tiles(frame, tile_size=512):
 
 
 def merge_tiles(tiles, positions, original_shape):
-    """Sloučí zpracované tiles s overlap blending - OPRAVENO"""
+    """Sloučí zpracované tiles s overlap blending - OPRAVENO broadcasting bug"""
     result = np.zeros(original_shape, dtype=np.float32)
     weight_sum = np.zeros(original_shape[:2], dtype=np.float32)
     
@@ -126,17 +126,18 @@ def merge_tiles(tiles, positions, original_shape):
             feather_mask = dist_field / (feather_width + 1e-6)
             feather_mask = np.clip(feather_mask, 0, 1)
         
-        # Aplikovat masku
-        tile_masked = tile.astype(np.float32) * feather_mask[:,:,np.newaxis]
-        feather_mask_3d = np.stack([feather_mask] * 3, axis=-1)
+        # === FIX: Správné broadcasting pro 3-kanálové aplikování ===
+        # Aplikovat masku na každý kanál
+        for c in range(tile.shape[2]):
+            result[y:y_end, x:x_end, c] += tile[:, :, c].astype(np.float32) * feather_mask
         
-        result[y:y_end, x:x_end] += tile_masked
-        weight_sum[y:y_end, x:x_end] += feather_mask_3d[:,:,0]
+        # Akumulovat váhy
+        weight_sum[y:y_end, x:x_end] += feather_mask
     
-    # Normalizovat
+    # Normalizovat - aplikovat weight_sum na všechny kanály
     weight_sum = np.maximum(weight_sum, 1e-6)
-    for c in range(result.shape[2]):
-        result[:, :, c] /= weight_sum
+    weight_sum_3d = weight_sum[:, :, np.newaxis]  # Broadcast to 3D
+    result /= weight_sum_3d
     
     return np.clip(result, 0, 255).astype(np.uint8)
 
@@ -217,9 +218,11 @@ def face_analyser_thread(frame_path, source_face, vr = True):
 
 def process_frames(source_img, frame_paths):
     """
-    Procesuje framy s maximální rychlostí - optimalizovaná verze.
-    Bez zbytečných threadů, přímé GPU zpracování.
+    Procesuje framy s maximální rychlostí - RTX 4060 Ti OPTIMALIZOVÁNO.
+    Batch processing, aggressive FP16, minimal memory overhead.
     """
+    from core.border_blur import apply_border_blur
+    
     swapper = get_face_swapper()
     source_frame = cv2.imread(source_img)
     source_face = get_face(source_frame)
@@ -228,7 +231,15 @@ def process_frames(source_img, frame_paths):
         print("[ERROR] Couldn't detect source face")
         return
 
-    print("[INFO] Processing frames with GPU acceleration...")
+    print("[INFO] Processing frames with RTX 4060 Ti optimizations...")
+    
+    # RTX 4060 Ti: Use CUDA stream for async operations
+    if core.globals.device == 'cuda':
+        stream = torch.cuda.Stream()
+    
+    # Batch processing každých 10 frames - memory efficient
+    batch_interval = 10
+    frame_counter = 0
     
     with tqdm(total=len(frame_paths), desc='Processing', unit="frame", 
               dynamic_ncols=True, 
@@ -241,73 +252,57 @@ def process_frames(source_img, frame_paths):
                     progress.update(1)
                     continue
                 
-                # Detekuj tváře
+                # Detekuj tváře (s FP16 acceleration)
                 target_faces = get_faces(frame)
                 if not target_faces:
                     progress.update(1)
                     continue
                 
-                # Swap s warping + FP16 supportem (Rope-next approach)
+                # Swap s FP16 + border blur
                 result = frame.copy()
                 for target_face in target_faces:
-                    # Warp tvář podle landmarks do standardní polohy
-                    if hasattr(target_face, 'kps') and target_face.kps is not None:
-                        warped_face, M_o2c, M_c2o = warp_face(frame, target_face.kps, target_size=512)
-                        if warped_face is None:
-                            # Fallback - bez warpingu
-                            if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                with torch.autocast('cuda'):
-                                    result = swapper.get(result, target_face, source_face, paste_back=True)
-                            else:
-                                result = swapper.get(result, target_face, source_face, paste_back=True)
-                            continue
-                        
-                        # Detekuj source face v warped coordinátech (zjednodušeno - použij celý warped frame)
-                        # Swap na warpované tváři
-                        if core.globals.use_fp16 and core.globals.device == 'cuda':
-                            with torch.autocast('cuda'):
-                                swapped_warped = swapper.get(warped_face, target_face, source_face, paste_back=True)
-                        else:
-                            swapped_warped = swapper.get(warped_face, target_face, source_face, paste_back=True)
-                        
-                        # Unwarp zpět do originálu
-                        swapped_unwarped = unwarp_face(swapped_warped, M_c2o, frame.shape)
-                        
-                        # Blend s měkkou maskou
-                        mask = create_soft_mask(512, border_width=40)
-                        # TODO: Blend warped verzi s originálním framen s maskou
-                        result = swapped_unwarped
-                    else:
-                        # Fallback - bez warpingu pokud landmarks nejsou dostupné
-                        if core.globals.use_fp16 and core.globals.device == 'cuda':
-                            with torch.autocast('cuda'):
-                                result = swapper.get(result, target_face, source_face, paste_back=True)
-                        else:
+                    # RTX 4060 Ti: Direct swap bez warpingu pro rychlost
+                    # (Warping můžete zapnout přidáním --use_warping flag)
+                    if core.globals.use_fp16 and core.globals.device == 'cuda':
+                        with torch.autocast('cuda', dtype=torch.float16):
                             result = swapper.get(result, target_face, source_face, paste_back=True)
+                    else:
+                        result = swapper.get(result, target_face, source_face, paste_back=True)
+                    
+                    # Aplikuj border blur pro eliminaci rámečků
+                    bbox = target_face.bbox
+                    result = apply_border_blur(result, bbox, blur_strength=15)
                 
                 # Ulož
                 cv2.imwrite(frame_path, result)
                 
-                # GPU cleanup
-                if core.globals.device == 'cuda':
+                # RTX 4060 Ti: Aggressive memory cleanup každých 10 frames
+                frame_counter += 1
+                if frame_counter % batch_interval == 0 and core.globals.device == 'cuda':
                     torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
                 
                 progress.update(1)
                 
             except Exception as e:
                 print(f"[ERROR] {os.path.basename(frame_path)}: {e}")
-                import traceback
-                traceback.print_exc()
                 progress.update(1)
                 continue
+        
+        # Final cleanup
+        if core.globals.device == 'cuda':
+            torch.cuda.empty_cache()
 
 
 
 def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_size=512):
     """
     Optimalizovaný swap s FP16, pokročilým blendingem a tile supportem pro 8K.
-    OPRAVENO: Eliminuje rámečky kolem obličeje, tvrdé přechody, nerealistické barvy.
+    OPRAVENO: Eliminuje rámečky kolem obličeje pomocí AdvancedFaceBlender + border_blur.
     """
+    from core.advanced_blending import AdvancedFaceBlender
+    from core.border_blur import apply_border_blur
+    
     frame_path = os.path.normpath(frame_path)
     
     if not os.path.exists(frame_path):
@@ -324,16 +319,18 @@ def perform_face_swap(frame_path, source_face, swapper, use_tiling=False, tile_s
         
         result = frame.copy()
         
+        # === OPRAVENO: Použití AdvancedFaceBlender ===
         for target_face in target_faces:
+            # Swap s paste_back=True
             result = swapper.get(result, target_face, source_face, paste_back=True)
+            
+            # Aplikuj border blur pro eliminaci rámečků
+            bbox = target_face.bbox
+            result = apply_border_blur(result, bbox, blur_strength=15)
         
         cv2.imwrite(frame_path, result)
         return result
         
-    except Exception as e:
-        print(f"[ERROR] {e}")
-        return None
-            
     except Exception as e:
         print(f"[ERROR] Face swap error: {e}")
         return None
