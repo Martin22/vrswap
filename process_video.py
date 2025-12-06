@@ -22,6 +22,7 @@ from core.swapper import get_face_swapper
 from core.analyser import get_face, get_faces
 from core.advanced_blending import AdvancedFaceBlender
 from core.face_warping import warp_face, unwarp_face, create_soft_mask
+from core.color_transfer import adaptive_color_blend
 
 
 class VideoProcessor:
@@ -225,6 +226,63 @@ class VideoProcessor:
         
         # RTX 4060 Ti: Use CUDA stream
         use_gpu_blur = self.gpu and core.globals.device == 'cuda'
+        # Cache for perspective remap grids to reduce overhead in VR-like pole handling
+        persp_cache = {}
+
+        def cached_perspective_grid(theta, phi, fov, size, w, h):
+            key = (round(theta, 2), round(phi, 2), round(fov, 1), size, w, h)
+            if key in persp_cache:
+                return persp_cache[key]
+
+            equ_cx = (w - 1) / 2.0
+            equ_cy = (h - 1) / 2.0
+
+            wFOV = fov
+            hFOV = float(size) / size * wFOV
+            w_len = np.tan(np.radians(wFOV / 2.0))
+            h_len = np.tan(np.radians(hFOV / 2.0))
+
+            x_map = np.ones([size, size], np.float32)
+            y_map = np.tile(np.linspace(-w_len, w_len, size), [size, 1])
+            z_map = -np.tile(np.linspace(-h_len, h_len, size), [size, 1]).T
+
+            D = np.sqrt(x_map ** 2 + y_map ** 2 + z_map ** 2)
+            xyz = np.stack((x_map, y_map, z_map), axis=2) / np.repeat(D[:, :, np.newaxis], 3, axis=2)
+
+            y_axis = np.array([0.0, 1.0, 0.0], np.float32)
+            z_axis = np.array([0.0, 0.0, 1.0], np.float32)
+            R1, _ = cv2.Rodrigues(z_axis * np.radians(theta))
+            R2, _ = cv2.Rodrigues(np.dot(R1, y_axis) * np.radians(-phi))
+
+            xyz = xyz.reshape([size * size, 3]).T
+            xyz = np.dot(R1, xyz)
+            xyz = np.dot(R2, xyz).T
+            lat = np.arcsin(xyz[:, 2])
+            lon = np.arctan2(xyz[:, 1], xyz[:, 0])
+
+            lon = lon.reshape([size, size]) / np.pi * 180
+            lat = -lat.reshape([size, size]) / np.pi * 180
+
+            lon_map = lon / 180 * equ_cx + equ_cx
+            lat_map = lat / 90 * equ_cy + equ_cy
+
+            persp_cache[key] = (lon_map.astype(np.float32), lat_map.astype(np.float32))
+            return persp_cache[key]
+
+        def soft_bbox_mask(h, w, border):
+            mask = np.zeros((h, w), dtype=np.float32)
+            inner_y1 = max(0, border)
+            inner_y2 = max(inner_y1 + 1, h - border)
+            inner_x1 = max(0, border)
+            inner_x2 = max(inner_x1 + 1, w - border)
+            mask[inner_y1:inner_y2, inner_x1:inner_x2] = 1.0
+            ksize = max(3, border * 2 + 1)
+            if ksize % 2 == 0:
+                ksize += 1
+            mask = cv2.GaussianBlur(mask, (ksize, ksize), border / 3.0 + 1e-6)
+            if mask.max() > 1e-6:
+                mask = mask / mask.max()
+            return mask
 
         def needs_pole_stabilization(bbox, frame_shape):
             h, w = frame_shape[:2]
@@ -250,43 +308,14 @@ class VideoProcessor:
                 # FOV podle velikosti boxu; clamp na rozumné hodnoty
                 fov = float(np.clip((x2 - x1) / w * 200.0, 80.0, 150.0))
                 size = 640
-
                 equ_cx = (w - 1) / 2.0
                 equ_cy = (h - 1) / 2.0
+
                 theta = (cx - equ_cx) / equ_cx * 180.0  # left/right
                 phi = -(cy - equ_cy) / equ_cy * 90.0    # up/down
 
-                # Build mapping (adapted from Equirec2Perspec without disk I/O)
-                wFOV = fov
-                hFOV = float(size) / size * wFOV
-                w_len = np.tan(np.radians(wFOV / 2.0))
-                h_len = np.tan(np.radians(hFOV / 2.0))
-
-                x_map = np.ones([size, size], np.float32)
-                y_map = np.tile(np.linspace(-w_len, w_len, size), [size, 1])
-                z_map = -np.tile(np.linspace(-h_len, h_len, size), [size, 1]).T
-
-                D = np.sqrt(x_map ** 2 + y_map ** 2 + z_map ** 2)
-                xyz = np.stack((x_map, y_map, z_map), axis=2) / np.repeat(D[:, :, np.newaxis], 3, axis=2)
-
-                y_axis = np.array([0.0, 1.0, 0.0], np.float32)
-                z_axis = np.array([0.0, 0.0, 1.0], np.float32)
-                R1, _ = cv2.Rodrigues(z_axis * np.radians(theta))
-                R2, _ = cv2.Rodrigues(np.dot(R1, y_axis) * np.radians(-phi))
-
-                xyz = xyz.reshape([size * size, 3]).T
-                xyz = np.dot(R1, xyz)
-                xyz = np.dot(R2, xyz).T
-                lat = np.arcsin(xyz[:, 2])
-                lon = np.arctan2(xyz[:, 1], xyz[:, 0])
-
-                lon = lon.reshape([size, size]) / np.pi * 180
-                lat = -lat.reshape([size, size]) / np.pi * 180
-
-                lon_map = lon / 180 * equ_cx + equ_cx
-                lat_map = lat / 90 * equ_cy + equ_cy
-
-                persp = cv2.remap(frame, lon_map.astype(np.float32), lat_map.astype(np.float32), cv2.INTER_CUBIC, borderMode=cv2.BORDER_WRAP)
+                lon_map, lat_map = cached_perspective_grid(theta, phi, fov, size, w, h)
+                persp = cv2.remap(frame, lon_map, lat_map, cv2.INTER_CUBIC, borderMode=cv2.BORDER_WRAP)
 
                 # Re-detect face in perspective space to avoid bbox mismatch
                 persp_faces = get_faces(persp)
@@ -435,6 +464,26 @@ class VideoProcessor:
                                     except Exception as swap_err:
                                         print(f"[DEBUG] Normal swap failed (bbox={bbox}): {swap_err}")
                                         continue
+
+                                # Post color + expression-preserving blend in bbox region
+                                x1c, y1c, x2c, y2c = map(int, [x1, y1, x2, y2])
+                                x1c = max(0, x1c); y1c = max(0, y1c)
+                                x2c = min(frame.shape[1], x2c); y2c = min(frame.shape[0], y2c)
+                                if x2c > x1c and y2c > y1c:
+                                    swap_patch = frame[y1c:y2c, x1c:x2c]
+                                    orig_patch = orig_frame[y1c:y2c, x1c:x2c]
+                                    try:
+                                        colored = adaptive_color_blend(orig_patch, swap_patch, mask=None, method="auto")
+                                        # Add a small amount of original detail to keep expressions
+                                        detail = orig_patch.astype(np.float32) - cv2.GaussianBlur(orig_patch, (0, 0), 1.2)
+                                        restored = np.clip(colored.astype(np.float32) + 0.18 * detail, 0, 255).astype(np.uint8)
+                                        band = max(6, min(24, min(swap_patch.shape[0], swap_patch.shape[1]) // 5))
+                                        mask = soft_bbox_mask(swap_patch.shape[0], swap_patch.shape[1], band)
+                                        mask3 = mask[:, :, None]
+                                        blended = swap_patch.astype(np.float32) * (1 - mask3) + restored.astype(np.float32) * mask3
+                                        frame[y1c:y2c, x1c:x2c] = np.clip(blended, 0, 255).astype(np.uint8)
+                                    except Exception as blend_err:
+                                        print(f"[DEBUG] Color/detail blend failed: {blend_err}")
                                 
                                 # RTX 4060 Ti: GPU-accelerated border blur
                                 bbox = target_face.bbox
