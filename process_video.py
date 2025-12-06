@@ -602,7 +602,9 @@ class VideoProcessor:
                                             pass
                                 
                             except Exception as e:
+                                import traceback
                                 print(f"[DEBUG] Swap error: {e}")
+                                traceback.print_exc()
                                 continue
                         
                         # Save processed frame
