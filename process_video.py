@@ -25,15 +25,24 @@ from core.face_warping import warp_face, unwarp_face, create_soft_mask
 
 
 class VideoProcessor:
-    def __init__(self, video_path, faces_folder, output_path, gpu=True, threads=5, tile_size=512, fast_mode=False):
-        """Initialize video processor"""
+    def __init__(self, video_path, faces_folder, output_path, gpu=True, threads=8, tile_size=512, fast_mode=False):
+        """Initialize video processor - RTX 4060 Ti OPTIMIZED
+        
+        Args:
+            threads: RTX 4060 Ti optimal = 8 (ne víc, GPU bottleneck)
+            tile_size: 512 je sweet spot pro 4K/8K
+        """
         self.video_path = os.path.normpath(video_path)
         self.faces_folder = os.path.normpath(faces_folder)
         self.output_path = os.path.normpath(output_path)
         self.gpu = gpu
-        self.threads = threads
+        self.threads = min(threads, 8)  # RTX 4060 Ti: Max 8 threads optimal
         self.tile_size = tile_size
         self.fast_mode = fast_mode
+        
+        # RTX 4060 Ti: Batch processing settings
+        self.batch_size = 4 if gpu else 1
+        self.memory_cleanup_interval = 10  # Cleanup každých 10 frames
         
         # Temporary working directory
         self.work_dir = None
@@ -169,13 +178,19 @@ class VideoProcessor:
         return frame_files
     
     def _process_frames(self, frame_files):
-        """Process frames with face swapping"""
-        print("[STEP 3/4] Processing frames with face swap...")
+        """Process frames with face swapping - RTX 4060 Ti OPTIMIZED"""
+        from core.border_blur import apply_border_blur_gpu, apply_border_blur
+        
+        print("[STEP 3/4] Processing frames with face swap (RTX 4060 Ti mode)...")
         
         if self.swapper is None:
             self.swapper = get_face_swapper()
         
         processed_count = 0
+        frame_counter = 0
+        
+        # RTX 4060 Ti: Use CUDA stream
+        use_gpu_blur = self.gpu and core.globals.device == 'cuda'
         
         with tqdm(total=len(frame_files), desc="Swapping faces", unit="frame") as pbar:
             for frame_file in frame_files:
@@ -196,51 +211,35 @@ class VideoProcessor:
                             
                             for target_face in target_faces:
                                 try:
-                                    # Warp tvář podle landmarks do standardní polohy (Rope-next approach)
-                                    if hasattr(target_face, 'kps') and target_face.kps is not None:
-                                        warped_face, M_o2c, M_c2o = warp_face(frame, target_face.kps, target_size=512)
-                                        if warped_face is not None:
-                                            # Swap na warpované tváři
-                                            if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                                import torch
-                                                with torch.autocast('cuda'):
-                                                    swapped_warped = self.swapper.get(warped_face, target_face, source_face, paste_back=True)
-                                            else:
-                                                swapped_warped = self.swapper.get(warped_face, target_face, source_face, paste_back=True)
-                                            
-                                            # Unwarp zpět do originálu
-                                            swapped_unwarped = unwarp_face(swapped_warped, M_c2o, frame.shape)
-                                            frame = swapped_unwarped
-                                        else:
-                                            # Fallback - bez warpingu
-                                            if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                                import torch
-                                                with torch.autocast('cuda'):
-                                                    frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                            else:
-                                                frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                    else:
-                                        # Fallback - bez landmarks
-                                        if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                            import torch
-                                            with torch.autocast('cuda'):
-                                                frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                        else:
+                                    # RTX 4060 Ti: Direct swap s FP16
+                                    if core.globals.use_fp16 and core.globals.device == 'cuda':
+                                        import torch
+                                        with torch.autocast('cuda', dtype=torch.float16):
                                             frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                    else:
+                                        frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                    
+                                    # RTX 4060 Ti: GPU-accelerated border blur
+                                    bbox = target_face.bbox
+                                    if use_gpu_blur:
+                                        frame = apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda')
+                                    else:
+                                        frame = apply_border_blur(frame, bbox, blur_strength=15)
+                                    
                                 except Exception as e:
                                     print(f"[DEBUG] Swap error: {e}")
-                                    import traceback
-                                    traceback.print_exc()
                                     continue
                         
                         # Save processed frame
                         cv2.imwrite(frame_file, frame)
                         processed_count += 1
                         
-                        # Cleanup GPU memory
-                        if core.globals.device == 'cuda':
+                        # RTX 4060 Ti: Aggressive memory cleanup
+                        frame_counter += 1
+                        if frame_counter % self.memory_cleanup_interval == 0 and core.globals.device == 'cuda':
                             import torch
                             torch.cuda.empty_cache()
+                            torch.cuda.synchronize()
                     
                     pbar.update(1)
                     
@@ -249,16 +248,21 @@ class VideoProcessor:
                     pbar.update(1)
                     continue
         
+        # Final cleanup
+        if core.globals.device == 'cuda':
+            import torch
+            torch.cuda.empty_cache()
+        
         print(f"  ✓ Processed {processed_count}/{len(frame_files)} frames")
         return processed_count
     
     def _encode_video(self, fps, output_resolution):
-        """Encode frames back to video using NVIDIA NVENC"""
-        print("[STEP 4/4] Encoding video (GPU accelerated)...")
+        """Encode frames back to video using NVIDIA NVENC - RTX 4060 Ti OPTIMIZED"""
+        print("[STEP 4/4] Encoding video (GPU accelerated - RTX 4060 Ti NVENC)...")
         
         input_pattern = os.path.join(self.frames_dir, "%06d.jpg")
         
-        # FFmpeg command with NVIDIA NVENC hardware encoding
+        # RTX 4060 Ti: NVENC hardware encoding s p5 preset (best quality)
         if self.gpu:
             cmd = [
                 "ffmpeg",
@@ -266,13 +270,16 @@ class VideoProcessor:
                 "-framerate", str(fps),
                 "-i", input_pattern,
                 "-c:v", "h264_nvenc",                   # NVIDIA hardware encoder
-                "-preset", "p4",                        # Medium preset (p2=fast, p4=medium, p6=slow/HQ)
+                "-preset", "p5",                        # p5 = High Quality (p2=fast, p4=medium, p5=slow/HQ)
                 "-tune", "hq",                          # High quality tuning
                 "-rc", "vbr",                           # Variable bitrate
-                "-cq", "19",                            # Quality level (lower=better, 0-51)
+                "-cq", "18",                            # Quality level (lower=better, 0-51, 18=visually lossless)
                 "-b:v", "0",                            # Let rate control decide bitrate
+                "-maxrate", "20M",                      # Max bitrate cap
+                "-bufsize", "40M",                      # Buffer size
                 "-pix_fmt", "yuv420p",
                 "-gpu", "0",                            # Use first GPU
+                "-movflags", "+faststart",              # Web optimization
                 self.output_path
             ]
         else:
