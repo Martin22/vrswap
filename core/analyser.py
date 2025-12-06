@@ -19,14 +19,14 @@ def get_face_analyser():
 
             def pick_by_override(mem_gb):
                 if override == 'l':
-                    return 'buffalo_l', (640, 640)
+                    return 'buffalo_l', (608, 608)
                 if override == 'm':
                     return 'buffalo_m', (512, 512)
                 if override == 's':
                     return 'buffalo_s', (512, 512)
                 # auto
                 if mem_gb >= 12:
-                    return 'buffalo_l', (640, 640)
+                    return 'buffalo_l', (608, 608)
                 if mem_gb >= 8:
                     return 'buffalo_m', (512, 512)
                 return 'buffalo_s', (512, 512)
