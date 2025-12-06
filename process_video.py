@@ -297,7 +297,9 @@ class VideoProcessor:
                 return self.swapper.get(frame_in, tgt_face, src_face, paste_back=paste_back)
             except Exception:
                 import traceback
-                print(f"[DEBUG] Swapper call failed. swapper={type(self.swapper)}, device={core.globals.device}, providers={core.globals.providers}, paste_back={paste_back}")
+                bbox_dbg = getattr(tgt_face, 'bbox', None)
+                kps_dbg = getattr(tgt_face, 'kps', None)
+                print(f"[DEBUG] Swapper call failed. swapper={type(self.swapper)}, device={core.globals.device}, providers={core.globals.providers}, paste_back={paste_back}, bbox={bbox_dbg}, kps_shape={(kps_dbg.shape if kps_dbg is not None else None)}")
                 traceback.print_exc()
                 raise
 
@@ -341,12 +343,7 @@ class VideoProcessor:
                 persp_target = persp_faces[0]
 
                 # Run swap on perspective patch
-                if core.globals.use_fp16 and core.globals.device == 'cuda':
-                    import torch
-                    with torch.autocast('cuda', dtype=torch.float16):
-                        swapped = self.swapper.get(persp, persp_target, source_face, paste_back=True)
-                else:
-                    swapped = self.swapper.get(persp, persp_target, source_face, paste_back=True)
+                swapped = safe_swap_call(persp, persp_target, source_face, paste_back=True)
 
                 # Map back to equirect by scattering pixels
                 lx = np.clip(np.rint(lon_map), 0, w - 1).astype(np.int32)
