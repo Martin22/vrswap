@@ -237,7 +237,10 @@ class VideoProcessor:
             return large or near_pole
 
         def swap_in_perspective(frame, target_face, source_face):
-            """Reproject local area to perspective to reduce equirect distortion, swap there, map back."""
+            """Reproject local area to perspective to reduce equirect distortion, swap there, map back.
+
+            Experimental: may fail on some faces; errors are swallowed and fall back to normal swap.
+            """
             try:
                 h, w = frame.shape[:2]
                 x1, y1, x2, y2 = target_face.bbox
@@ -344,9 +347,8 @@ class VideoProcessor:
                                     continue
                                 source_face = best_source['data']
 
-                                # For extreme poles/close-ups, try perspective swap to reduce distortion
-                                perspective_frame = None
-                                if needs_pole_stabilization(target_face.bbox, frame.shape):
+                                # For extreme poles/close-ups, optionally try perspective swap to reduce distortion
+                                if core.globals.perspective_poles and needs_pole_stabilization(target_face.bbox, frame.shape):
                                     perspective_frame = swap_in_perspective(frame, target_face, source_face)
                                     if perspective_frame is not None:
                                         frame = perspective_frame
@@ -538,6 +540,9 @@ Examples:
 
     parser.add_argument("--detector", choices=['auto', 'l', 'm', 's'], default='auto',
                        help="Face detector size: auto (default), l=buffalo_l, m=buffalo_m, s=buffalo_s")
+
+    parser.add_argument("--perspective-poles", action="store_true", default=False,
+                       help="Try perspective reproject swap for extreme pole closeups (experimental)")
     
     parser.add_argument("--execution-provider", choices=['cuda', 'tensorrt', 'cpu'], default='cuda',
                        help="Execution provider (default: cuda)")
@@ -567,6 +572,7 @@ Examples:
     
     # Propagate detector choice
     core.globals.detector_override = args.detector
+    core.globals.perspective_poles = args.perspective_poles
 
     # Create processor and run
     try:
