@@ -443,16 +443,44 @@ class VideoProcessor:
                 return None
 
         def shifted_face(face, dx, dy):
-            """Return a shallow copy of face with bbox/kps shifted by dx,dy."""
-            import copy
-            f = copy.deepcopy(face)
-            if hasattr(f, 'bbox') and f.bbox is not None:
-                f.bbox = [f.bbox[0] + dx, f.bbox[1] + dy, f.bbox[2] + dx, f.bbox[3] + dy]
-            if hasattr(f, 'kps') and f.kps is not None:
-                f.kps = f.kps + np.array([dx, dy])
+            """Return a modified face object with bbox/kps shifted by dx,dy.
+            
+            Uses a simple wrapper class since insightface Face objects don't support deepcopy.
+            """
+            class ShiftedFace:
+                pass
+            
+            f = ShiftedFace()
+            # Copy all attributes from original face
+            for attr in dir(face):
+                if not attr.startswith('_'):
+                    try:
+                        setattr(f, attr, getattr(face, attr))
+                    except Exception:
+                        pass
+            
+            # Shift bbox
+            if hasattr(face, 'bbox') and face.bbox is not None:
+                bbox = face.bbox
+                f.bbox = np.array([bbox[0] + dx, bbox[1] + dy, bbox[2] + dx, bbox[3] + dy], dtype=np.float32)
+            
+            # Shift keypoints
+            if hasattr(face, 'kps') and face.kps is not None:
+                f.kps = face.kps.copy() + np.array([dx, dy], dtype=np.float32)
+            
+            # Shift landmarks
             for attr in ['landmark_2d_106', 'landmark_3d_68', 'landmark_2d_5']:
-                if hasattr(f, attr) and getattr(f, attr) is not None:
-                    setattr(f, attr, getattr(f, attr) + np.array([dx, dy]))
+                if hasattr(face, attr) and getattr(face, attr) is not None:
+                    orig = getattr(face, attr)
+                    if orig.shape[-1] == 2:
+                        setattr(f, attr, orig.copy() + np.array([dx, dy], dtype=np.float32))
+                    elif orig.shape[-1] == 3:
+                        # 3D landmarks: shift only x,y
+                        shifted = orig.copy()
+                        shifted[..., 0] += dx
+                        shifted[..., 1] += dy
+                        setattr(f, attr, shifted)
+            
             return f
 
         def select_best_source(target_face):
