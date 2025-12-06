@@ -6,6 +6,7 @@ import platform
 # Providers and options (can be overridden by caller)
 providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
 provider_options = None
+detector_override = 'auto'
 
 def _ensure_cache_dir():
     cache_dir = Path.cwd() / '.trt_cache'

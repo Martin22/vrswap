@@ -535,6 +535,9 @@ Examples:
                        help="Tile size for 8K processing (0=disable, default: 512)")
     parser.add_argument("--fast", action="store_true", default=False,
                        help="Fast mode - skip color matching")
+
+    parser.add_argument("--detector", choices=['auto', 'l', 'm', 's'], default='auto',
+                       help="Face detector size: auto (default), l=buffalo_l, m=buffalo_m, s=buffalo_s")
     
     parser.add_argument("--execution-provider", choices=['cuda', 'tensorrt', 'cpu'], default='cuda',
                        help="Execution provider (default: cuda)")
@@ -562,6 +565,9 @@ Examples:
         ]
         print("[INFO] Using GPU mode (CUDA)")
     
+    # Propagate detector choice
+    core.globals.detector_override = args.detector
+
     # Create processor and run
     try:
         processor = VideoProcessor(
