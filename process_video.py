@@ -284,6 +284,23 @@ class VideoProcessor:
                 mask = mask / mask.max()
             return mask
 
+        def safe_swap_call(frame_in, tgt_face, src_face, paste_back=True):
+            """Call swapper with debug diagnostics on failure."""
+            if not hasattr(self.swapper, 'get') or not callable(getattr(self.swapper, 'get', None)):
+                print(f"[ERROR] Swapper.get is not callable. swapper={type(self.swapper)}, attrs={dir(self.swapper) if self.swapper else 'None'}")
+                raise RuntimeError("Swapper.get not callable")
+            try:
+                if core.globals.use_fp16 and core.globals.device == 'cuda':
+                    import torch
+                    with torch.autocast('cuda', dtype=torch.float16):
+                        return self.swapper.get(frame_in, tgt_face, src_face, paste_back=paste_back)
+                return self.swapper.get(frame_in, tgt_face, src_face, paste_back=paste_back)
+            except Exception:
+                import traceback
+                print(f"[DEBUG] Swapper call failed. swapper={type(self.swapper)}, device={core.globals.device}, providers={core.globals.providers}, paste_back={paste_back}")
+                traceback.print_exc()
+                raise
+
         def needs_pole_stabilization(bbox, frame_shape):
             h, w = frame_shape[:2]
             x1, y1, x2, y2 = bbox
@@ -440,32 +457,17 @@ class VideoProcessor:
 
                                     # Swap on padded frame
                                     try:
-                                        if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                            import torch
-                                            with torch.autocast('cuda', dtype=torch.float16):
-                                                swapped_padded = self.swapper.get(padded_frame, adjusted_face, source_face, paste_back=True)
-                                        else:
-                                            swapped_padded = self.swapper.get(padded_frame, adjusted_face, source_face, paste_back=True)
-
+                                        swapped_padded = safe_swap_call(padded_frame, adjusted_face, source_face, paste_back=True)
                                         # Extract result back to original frame size
                                         frame = swapped_padded[pad_top:pad_top+h, pad_left:pad_left+w]
                                     except Exception as swap_err:
-                                        import traceback
-                                        traceback.print_exc()
                                         print(f"[DEBUG] Padded swap failed (bbox={bbox}): {swap_err}")
                                         continue
                                 else:
                                     # Normal swap for faces within bounds
                                     try:
-                                        if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                            import torch
-                                            with torch.autocast('cuda', dtype=torch.float16):
-                                                frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                        else:
-                                            frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                        frame = safe_swap_call(frame, target_face, source_face, paste_back=True)
                                     except Exception as swap_err:
-                                        import traceback
-                                        traceback.print_exc()
                                         print(f"[DEBUG] Normal swap failed (bbox={bbox}): {swap_err}")
                                         continue
 
