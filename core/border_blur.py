@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 
 
-def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
+def apply_border_blur_gpu(frame, bbox, blur_strength=12, device='cuda'):
     """GPU-accelerated border blur pro RTX 4060 Ti - 3-5x rychlejší
     
     Args:
@@ -32,7 +32,7 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
             return frame
         
         # Pracuj pouze v ROI okolo bbox, aby se nerozmazal celý snímek
-        pad = max(blur_strength * 2, 32)
+        pad = max(8, min(24, max(w, h) // 6))
         rx1 = max(0, x1 - pad)
         ry1 = max(0, y1 - pad)
         rx2 = min(frame.shape[1], x2 + pad)
@@ -50,7 +50,7 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
         mask[0, 0, y1 - ry1:y2 - ry1, x1 - rx1:x2 - rx1] = 1.0
         
         # Erosion using max_pool2d (inverse)
-        feather_radius = max(2, min(12, min(h, w) // 6))  # adapt na velikost bbox, aby nezmizela maska
+        feather_radius = max(2, min(8, min(h, w) // 8))  # užší pás pro feather
         erosion_kernel_size = 2 * feather_radius + 1
         # Erosion = 1 - max_pool(-mask)
         mask_inv = 1.0 - mask
@@ -58,9 +58,9 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
                                        stride=1, padding=erosion_kernel_size//2)
         mask_eroded = 1.0 - mask_inv_eroded
         
-        # Gaussian blur
-        kernel_size = blur_strength * 2 + 1
-        sigma = (blur_strength + 1) * 0.2
+        # Gaussian blur (malý kernel, aby plynulý přechod byl jen v úzkém pásu)
+        kernel_size = feather_radius * 2 + 1
+        sigma = max(0.8, feather_radius * 0.6)
         
         # Create Gaussian kernel
         x = torch.arange(-kernel_size//2 + 1, kernel_size//2 + 1, device=device, dtype=torch.float32)
@@ -72,8 +72,9 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
         # Apply Gaussian blur to mask and frame
         mask_soft = F.conv2d(mask_eroded, gaussian_kernel, padding=kernel_size//2)
         mask_soft = torch.clamp(mask_soft, 0, 1)
-        # Normalizace, aby centrum zůstalo ~1 i u malých bbox
         mask_soft = mask_soft / (mask_soft.amax() + 1e-6)
+        # Zesílit střed, aby uvnitř zůstal ostrý
+        mask_soft = mask_soft.pow(1.5)
 
         # Blur the frame for edge feathering
         gaussian_kernel_3ch = gaussian_kernel.expand(3, 1, -1, -1)
@@ -97,7 +98,7 @@ def apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda'):
         return apply_border_blur(frame, bbox, blur_strength)
 
 
-def apply_border_blur(frame, bbox, blur_strength=15):
+def apply_border_blur(frame, bbox, blur_strength=12):
     """Aplikuj měkké rozmazání na hrany swapped tváře - dle VisoMaster VR180
     
     Args:
@@ -119,7 +120,7 @@ def apply_border_blur(frame, bbox, blur_strength=15):
             return frame
         
         # ROI pouze kolem bbox, aby se nerozmazal celý frame
-        pad = max(blur_strength * 2, 32)
+        pad = max(8, min(24, max(w, h) // 6))
         rx1 = max(0, x1 - pad)
         ry1 = max(0, y1 - pad)
         rx2 = min(frame.shape[1], x2 + pad)
@@ -132,9 +133,9 @@ def apply_border_blur(frame, bbox, blur_strength=15):
         mask = np.zeros((roi_h, roi_w), dtype=np.float32)
         mask[y1 - ry1:y2 - ry1, x1 - rx1:x2 - rx1] = 1.0
         
-        # === OPRAVENO: Balanced feathering jako VisoMaster ===
+        # === Feathering dle VisoMaster, ale s užším pásem ===
         # 1. Erosion pro stažení okrajů dovnitř
-        feather_radius = 12  # VisoMaster balanced value
+        feather_radius = max(2, min(8, min(h, w) // 8))
         erosion_kernel_size = 2 * feather_radius + 1
         erosion_kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, 
@@ -142,9 +143,9 @@ def apply_border_blur(frame, bbox, blur_strength=15):
         )
         mask_eroded = cv2.erode(mask, erosion_kernel, iterations=1)
         
-        # 2. Gaussian blur pro feathering - dle Rope-next formula
-        kernel_size = blur_strength * 2 + 1
-        sigma = (blur_strength + 1) * 0.2
+        # 2. Gaussian blur pro feathering (malý kernel, jen okraje)
+        kernel_size = feather_radius * 2 + 1
+        sigma = max(0.8, feather_radius * 0.6)
         
         # Kernel size musí být lichý a minimálně 1
         if kernel_size % 2 == 0:
@@ -157,6 +158,7 @@ def apply_border_blur(frame, bbox, blur_strength=15):
         mask_soft = np.clip(mask_soft, 0, 1)
         if mask_soft.max() > 1e-6:
             mask_soft = mask_soft / mask_soft.max()
+        mask_soft = np.power(mask_soft, 1.5)
         
         # Připrav rozmazaný snímek pro měkké hrany (jen ROI)
         frame_blurred = cv2.GaussianBlur(frame_roi, (kernel_size, kernel_size), sigma)
