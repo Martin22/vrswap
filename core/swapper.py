@@ -18,19 +18,28 @@ def get_face_swapper():
     global FACE_SWAPPER
     if FACE_SWAPPER is None:
         model_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), '../inswapper_128_fp16.onnx')
-        
+
+        # Build provider list locally and drop TensorRT for stability (TRT sometimes yields empty outputs)
+        providers = list(core.globals.providers or ['CUDAExecutionProvider', 'CPUExecutionProvider'])
+        provider_options = core.globals.provider_options
+        if 'TensorrtExecutionProvider' in providers:
+            trt_idx = providers.index('TensorrtExecutionProvider')
+            providers = [p for p in providers if p != 'TensorrtExecutionProvider']
+            if isinstance(provider_options, list) and len(provider_options) > trt_idx:
+                provider_options = [opt for i, opt in enumerate(provider_options) if i != trt_idx]
+            print("[INFO] TensorRT disabled for face swapper (stability fix); using", providers)
+
         # Load model using insightface (pass provider_options if available)
         try:
             FACE_SWAPPER = insightface.model_zoo.get_model(
                 model_path,
-                providers=core.globals.providers,
-                provider_options=core.globals.provider_options
+                providers=providers,
+                provider_options=provider_options
             )
 
             # Try to enable ONNX Runtime IO binding for faster GPU path (skip when TensorRT is active)
             try:
-                # If TensorRT EP is present, avoid monkey-patching
-                if 'TensorrtExecutionProvider' not in (core.globals.providers or []):
+                if 'TensorrtExecutionProvider' not in providers:
                     sess = getattr(FACE_SWAPPER, 'model', None)
                     if sess is not None and hasattr(sess, 'io_binding') and hasattr(sess, 'run_with_iobinding'):
                         inputs = sess.get_inputs()
@@ -49,7 +58,6 @@ def get_face_swapper():
                                     if input_feed is None:
                                         input_feed = kwargs.get('input_feed') or (args[0] if args and isinstance(args[0], dict) else None)
                                     if input_feed is None:
-                                        # Fallback to original run
                                         return sess._orig_run(*args, **kwargs)
 
                                     # Prepare IO binding
@@ -81,11 +89,9 @@ def get_face_swapper():
                                     sess.run_with_iobinding(ib)
                                     return [out_arr]
                                 except Exception:
-                                    # On any failure, revert to original run and fall back
                                     sess.run = sess._orig_run
                                     return sess._orig_run(*args, **kwargs)
 
-                            # Monkey-patch run while keeping original as backup
                             if not hasattr(sess, '_orig_run'):
                                 sess._orig_run = sess.run
                             sess.run = _run_with_iobinding
@@ -95,7 +101,7 @@ def get_face_swapper():
         except Exception as e:
             print(f"Error loading model: {e}")
             raise e
-    
+
     return FACE_SWAPPER
 
 

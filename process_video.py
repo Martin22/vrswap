@@ -286,8 +286,8 @@ class VideoProcessor:
                 mask = mask / mask.max()
             return mask
 
-        def safe_swap_call(frame_in, tgt_face, src_face, paste_back=True):
-            """Call swapper with debug diagnostics on failure."""
+        def safe_swap_call(frame_in, tgt_face, src_face, paste_back=True, retry_without_trt=False):
+            """Call swapper with debug diagnostics; auto-fallback if TensorRT returns empty outputs."""
             if not hasattr(self.swapper, 'get') or not callable(getattr(self.swapper, 'get', None)):
                 print(f"[ERROR] Swapper.get is not callable. swapper={type(self.swapper)}, attrs={dir(self.swapper) if self.swapper else 'None'}")
                 raise RuntimeError("Swapper.get not callable")
@@ -297,12 +297,36 @@ class VideoProcessor:
                     with torch.autocast('cuda', dtype=torch.float16):
                         return self.swapper.get(frame_in, tgt_face, src_face, paste_back=paste_back)
                 return self.swapper.get(frame_in, tgt_face, src_face, paste_back=paste_back)
-            except Exception:
+            except Exception as exc:
                 import traceback
                 bbox_dbg = getattr(tgt_face, 'bbox', None)
                 kps_dbg = getattr(tgt_face, 'kps', None)
                 print(f"[DEBUG] Swapper call failed. swapper={type(self.swapper)}, device={core.globals.device}, providers={core.globals.providers}, paste_back={paste_back}, bbox={bbox_dbg}, kps_shape={(kps_dbg.shape if kps_dbg is not None else None)}, frame_shape={frame_in.shape if hasattr(frame_in, 'shape') else None}, tgt_face={tgt_face}")
                 traceback.print_exc()
+
+                # TensorRT sometimes returns an empty output list; retry once without TensorRT EP
+                if (not retry_without_trt) and ('list index out of range' in str(exc)):
+                    try:
+                        import core.swapper as swapper_module
+                        orig_providers = list(core.globals.providers or [])
+                        orig_options = core.globals.provider_options
+                        if 'TensorrtExecutionProvider' in orig_providers:
+                            fallback_providers = [p for p in orig_providers if p != 'TensorrtExecutionProvider']
+                            fallback_options = None
+                            if isinstance(orig_options, list) and len(orig_options) == len(orig_providers):
+                                # drop the first provider option corresponding to TensorRT
+                                trt_index = orig_providers.index('TensorrtExecutionProvider')
+                                fallback_options = [opt for i, opt in enumerate(orig_options) if i != trt_index]
+
+                            core.globals.providers = fallback_providers
+                            core.globals.provider_options = fallback_options
+                            swapper_module.FACE_SWAPPER = None  # force reload
+                            self.swapper = get_face_swapper()
+                            print("[DEBUG] Retrying swap without TensorRT Execution Provider after IndexError")
+                            return safe_swap_call(frame_in, tgt_face, src_face, paste_back=paste_back, retry_without_trt=True)
+                    except Exception:
+                        traceback.print_exc()
+
                 raise
 
         def needs_pole_stabilization(bbox, frame_shape):
