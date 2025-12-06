@@ -36,70 +36,16 @@ def get_face_swapper():
                 providers=providers,
                 provider_options=provider_options
             )
-
-            # Try to enable ONNX Runtime IO binding for faster GPU path (skip when TensorRT is active)
-            try:
-                if 'TensorrtExecutionProvider' not in providers:
-                    sess = getattr(FACE_SWAPPER, 'model', None)
-                    if sess is not None and hasattr(sess, 'io_binding') and hasattr(sess, 'run_with_iobinding'):
-                        inputs = sess.get_inputs()
-                        outputs = sess.get_outputs()
-                        if len(inputs) >= 2 and len(outputs) >= 1:
-                            input_names = [inp.name for inp in inputs[:2]]
-                            output_name = outputs[0].name
-                            device_type = 'cuda' if core.globals.device == 'cuda' else 'cpu'
-
-                            def _run_with_iobinding(*args, **kwargs):
-                                # ORT run signature: run(output_names=None, input_feed=None, ...)
-                                try:
-                                    input_feed = None
-                                    if len(args) >= 2 and isinstance(args[1], dict):
-                                        input_feed = args[1]
-                                    if input_feed is None:
-                                        input_feed = kwargs.get('input_feed') or (args[0] if args and isinstance(args[0], dict) else None)
-                                    if input_feed is None:
-                                        return sess._orig_run(*args, **kwargs)
-
-                                    # Prepare IO binding
-                                    ib = sess.io_binding()
-                                    for name in input_names:
-                                        if name not in input_feed:
-                                            return sess._orig_run(*args, **kwargs)
-                                        arr = np.ascontiguousarray(input_feed[name])
-                                        ib.bind_input(
-                                            name=name,
-                                            device_type=device_type,
-                                            device_id=0,
-                                            element_type=np.float32,
-                                            shape=arr.shape,
-                                            buffer_ptr=arr.ctypes.data
-                                        )
-
-                                    # Output buffer shape is fixed for inswapper_128
-                                    out_arr = np.empty((1, 3, 128, 128), dtype=np.float32)
-                                    ib.bind_output(
-                                        name=output_name,
-                                        device_type=device_type,
-                                        device_id=0,
-                                        element_type=np.float32,
-                                        shape=out_arr.shape,
-                                        buffer_ptr=out_arr.ctypes.data
-                                    )
-
-                                    sess.run_with_iobinding(ib)
-                                    return [out_arr]
-                                except Exception:
-                                    sess.run = sess._orig_run
-                                    return sess._orig_run(*args, **kwargs)
-
-                            if not hasattr(sess, '_orig_run'):
-                                sess._orig_run = sess.run
-                            sess.run = _run_with_iobinding
-                            print("[INFO] IO binding enabled for inswapper session")
-            except Exception as io_err:
-                print(f"[DEBUG] IO binding not applied (fallback to default run): {io_err}")
+            # Verify model loaded correctly and has .get method
+            if FACE_SWAPPER is None:
+                print("[ERROR] insightface.model_zoo.get_model returned None")
+            elif not hasattr(FACE_SWAPPER, 'get') or not callable(getattr(FACE_SWAPPER, 'get', None)):
+                print(f"[ERROR] Loaded model does not have callable .get method. Type: {type(FACE_SWAPPER)}")
+            else:
+                print(f"[INFO] Face swapper loaded successfully: {type(FACE_SWAPPER).__name__}")
         except Exception as e:
             print(f"Error loading model: {e}")
+            traceback.print_exc()
             raise e
 
     return FACE_SWAPPER
