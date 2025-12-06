@@ -1,9 +1,59 @@
+import os
+from pathlib import Path
 import onnxruntime
 import platform
 
+# Providers and options (can be overridden by caller)
+providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+provider_options = None
+
+def _ensure_cache_dir():
+    cache_dir = Path.cwd() / '.trt_cache'
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    return cache_dir
+
+
+def enable_tensorrt(fp16=True):
+    """Configure global env + provider options for TensorRT with caching.
+    Uses ORT engine cache + timing cache to avoid rebuild every run.
+    """
+    cache_dir = _ensure_cache_dir()
+    timing_cache = cache_dir / 'trt_timing.cache'
+
+    os.environ.setdefault('ORT_TENSORRT_ENGINE_CACHE_ENABLE', '1')
+    os.environ.setdefault('ORT_TENSORRT_ENGINE_CACHE_PATH', str(cache_dir))
+    os.environ.setdefault('ORT_TENSORRT_TIMING_CACHE_ENABLE', '1')
+    os.environ.setdefault('ORT_TENSORRT_TIMING_CACHE_PATH', str(timing_cache))
+    if fp16:
+        os.environ.setdefault('ORT_TENSORRT_FP16_ENABLE', '1')
+
+    trt_opts = {
+        'device_id': '0',
+        'trt_engine_cache_enable': '1',
+        'trt_engine_cache_path': str(cache_dir),
+        'trt_timing_cache_enable': '1',
+        'trt_timing_cache_path': str(timing_cache),
+        'trt_fp16_enable': '1' if fp16 else '0',
+        'trt_builder_optimization_level': '4',
+    }
+
+    cuda_opts = {
+        'device_id': '0',
+        'cudnn_conv_algo_search': 'EXHAUSTIVE',
+        'do_copy_in_default_stream': '1',
+    }
+
+    # Expose to global vars
+    global providers, provider_options
+    providers = ['TensorrtExecutionProvider', 'CUDAExecutionProvider', 'CPUExecutionProvider']
+    provider_options = [trt_opts, cuda_opts, {}]
+
+
 # Windows 11 + Python 3.12 compatible settings
 use_gpu = False
-providers = onnxruntime.get_available_providers()
+available_providers = onnxruntime.get_available_providers()
+if 'CUDAExecutionProvider' in available_providers:
+    use_gpu = True
 
 # Přidat CPU executor na konec pro fallback
 if 'CPUExecutionProvider' not in providers:
