@@ -396,9 +396,10 @@ class VideoProcessor:
         def swap_in_perspective(frame, target_face, source_face):
             """Reproject local area to perspective to reduce equirect distortion, swap there, map back.
 
-            Experimental: re-detect face on the perspective patch to avoid bbox mismatch.
-            Errors are swallowed and fall back to normal swap.
+            Skipped when fast_mode is enabled.
             """
+            if self.fast_mode:
+                return None
             try:
                 h, w = frame.shape[:2]
                 x1, y1, x2, y2 = target_face.bbox
@@ -531,7 +532,7 @@ class VideoProcessor:
                                     continue
 
                                 # For extreme poles/close-ups, optionally try perspective swap to reduce distortion
-                                if core.globals.perspective_poles and needs_pole_stabilization(target_face.bbox, frame.shape):
+                                if (not self.fast_mode) and core.globals.perspective_poles and needs_pole_stabilization(target_face.bbox, frame.shape):
                                     perspective_frame = swap_in_perspective(frame, target_face, source_face)
                                     if perspective_frame is not None:
                                         frame = perspective_frame
@@ -592,7 +593,7 @@ class VideoProcessor:
                                 x1c, y1c, x2c, y2c = map(int, [x1, y1, x2, y2])
                                 x1c = max(0, x1c); y1c = max(0, y1c)
                                 x2c = min(frame.shape[1], x2c); y2c = min(frame.shape[0], y2c)
-                                if x2c > x1c and y2c > y1c:
+                                if (not self.fast_mode) and x2c > x1c and y2c > y1c:
                                     swap_patch = frame[y1c:y2c, x1c:x2c]
                                     orig_patch = orig_frame[y1c:y2c, x1c:x2c]
                                     try:
@@ -610,13 +611,14 @@ class VideoProcessor:
                                 
                                 # RTX 4060 Ti: GPU-accelerated border blur
                                 bbox = target_face.bbox
-                                if use_gpu_blur:
-                                    frame = apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda')
-                                else:
-                                    frame = apply_border_blur(frame, bbox, blur_strength=15)
+                                if not self.fast_mode:
+                                    if use_gpu_blur:
+                                        frame = apply_border_blur_gpu(frame, bbox, blur_strength=15, device='cuda')
+                                    else:
+                                        frame = apply_border_blur(frame, bbox, blur_strength=15)
 
                                 # Stabilize extreme close-ups near poles with seamless cloning
-                                if needs_pole_stabilization(bbox, frame.shape):
+                                if (not self.fast_mode) and needs_pole_stabilization(bbox, frame.shape):
                                     x1, y1, x2, y2 = map(int, bbox)
                                     x1 = max(0, x1); y1 = max(0, y1)
                                     x2 = min(frame.shape[1], x2); y2 = min(frame.shape[0], y2)
