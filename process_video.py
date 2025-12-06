@@ -362,12 +362,16 @@ class VideoProcessor:
                                         continue
                                 
                                 # RTX 4060 Ti: Direct swap s FP16
-                                if core.globals.use_fp16 and core.globals.device == 'cuda':
-                                    import torch
-                                    with torch.autocast('cuda', dtype=torch.float16):
+                                try:
+                                    if core.globals.use_fp16 and core.globals.device == 'cuda':
+                                        import torch
+                                        with torch.autocast('cuda', dtype=torch.float16):
+                                            frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                    else:
                                         frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
-                                else:
-                                    frame = self.swapper.get(frame, target_face, source_face, paste_back=True)
+                                except Exception as swap_err:
+                                    print(f"[DEBUG] Swap failed (bbox={target_face.bbox}, frame_shape={frame.shape[:2]}): {swap_err}")
+                                    continue
                                 
                                 # RTX 4060 Ti: GPU-accelerated border blur
                                 bbox = target_face.bbox
